@@ -116,7 +116,7 @@ internal static class MacDocumentWindows
             using var options = new Rhino.FileIO.FileReadOptions { NewMode = true, BatchMode = true, UseScaleGeometry = true, ScaleGeometry = false };
             if (!RhinoDoc.ReadFile(template, options))
                 throw new DocumentOperationException("NATIVE_OPEN_FAILED", "Could not initialize the new document from its template.");
-            document.Modified = true;
+            MarkModified(document);
         }
         return CreatedDocument(before, native, Initialize);
     }
@@ -146,15 +146,36 @@ internal static class MacDocumentWindows
             Thread.Sleep(1);
         }
     }
-    public static void Close(RhinoDoc document)
+    private static object NativeDocument(RhinoDoc document)
     {
         var window = RhinoEtoApp.MainWindowForDocument(document)
             ?? throw new DocumentOperationException("NATIVE_WINDOW_UNAVAILABLE", "The Rhino document has no macOS model window.");
         var control = window.ControlObject;
-        var controller = Property(control, "WindowController");
+        var nativeWindow = Property(control, "Window") ?? control;
+        var controller = Property(nativeWindow, "WindowController") ?? Property(control, "WindowController");
         var native = Property(controller, "Document") ?? Property(control, "Document");
         if (native == null) NativeDocuments.TryGetValue(document.RuntimeSerialNumber, out native);
+        // Documents opened before this service started are not in our cache.
+        native ??= Invoke(Controller, "DocumentForWindow", new object?[] { nativeWindow });
         if (native == null) throw new DocumentOperationException("CAPABILITY_UNAVAILABLE", "Cannot resolve the macOS document belonging to this model window.");
+        return native;
+    }
+    public static bool IsModified(RhinoDoc document) => Property(NativeDocument(document), "IsDocumentEdited") is bool modified
+        ? modified : throw new DocumentOperationException("CAPABILITY_UNAVAILABLE", "macOS does not expose the document's edited state.");
+    public static void MarkModified(RhinoDoc document)
+    {
+        var native = NativeDocument(document);
+        if (Property(native, "IsDocumentEdited") is true) return;
+        // RhinoDoc.Modified's setter does nothing on Mac. AppKit owns the
+        // change count; use its public API for changes outside an Undo group.
+        var done = Enum.Parse(PlatformType("AppKit.NSDocumentChangeType"), "Done");
+        Invoke(native, "UpdateChangeCount", new object?[] { done });
+        if (Property(native, "IsDocumentEdited") is not true)
+            throw new DocumentOperationException("NATIVE_OPERATION_FAILED", "macOS did not mark the document as edited.");
+    }
+    public static void Close(RhinoDoc document)
+    {
+        var native = NativeDocument(document);
         Invoke(native, "Close", Array.Empty<object?>());
         // Close can remove the Rhino model before AppKit finishes its controller
         // bookkeeping. Do not let an immediate reopen reuse the closed NSDocument.

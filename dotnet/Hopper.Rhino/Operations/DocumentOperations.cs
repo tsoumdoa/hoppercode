@@ -111,8 +111,12 @@ internal sealed class RhinoDocumentOperations : DocumentService<RhinoDoc>, IDisp
     protected override RhinoDoc? Active => RhinoDoc.ActiveDoc;
     protected override string NativeId(RhinoDoc doc) => doc.RuntimeSerialNumber.ToString();
     protected override string? PathOf(RhinoDoc doc) => doc.Path;
-    protected override bool Modified(RhinoDoc doc) => doc.Modified;
-    protected override void MarkModified(RhinoDoc doc) => doc.Modified = true;
+    protected override bool Modified(RhinoDoc doc) => OperatingSystem.IsMacOS() ? MacDocumentWindows.IsModified(doc) : doc.Modified;
+    protected override void MarkModified(RhinoDoc doc)
+    {
+        if (OperatingSystem.IsMacOS()) MacDocumentWindows.MarkModified(doc);
+        else doc.Modified = true;
+    }
     protected override bool ReplacesActive => OperatingSystem.IsWindows();
     protected override string Fingerprint(RhinoDoc doc) => _revisions.GetValueOrDefault(doc.RuntimeSerialNumber) + "|" + SettingsRevision(doc) + "|" + PersistedPropertiesRevision(doc);
     protected override string TransitionFingerprint(RhinoDoc doc) => _contentRevisions.GetValueOrDefault(doc.RuntimeSerialNumber) + "|" + SettingsRevision(doc) + "|" + PersistedPropertiesRevision(doc);
@@ -127,10 +131,11 @@ internal sealed class RhinoDocumentOperations : DocumentService<RhinoDoc>, IDisp
         using var earth = doc.EarthAnchorPoint;
         using var mesh = doc.GetMeshingParameters(Rhino.Geometry.MeshingParameterStyle.Custom);
         using var analysisMesh = doc.GetAnalysisMeshingParameters();
+        using var animation = doc.AnimationProperties;
         return DocumentSession.Digest(JsonSerializer.Serialize(new {
             doc.Notes, doc.ModelBasepoint, earth,
             render = render.ToJSON(new SerializationOptions { WriteUserData = true }),
-            doc.AnimationProperties, doc.CustomRenderSizes, doc.MeshingParameterStyle, mesh, analysisMesh,
+            animation, doc.CustomRenderSizes, doc.MeshingParameterStyle, mesh, analysisMesh,
             doc.ModelSpaceHatchScale, doc.ModelSpaceHatchScalingEnabled,
             doc.ModelSpaceTextScale, doc.ModelSpaceAnnotationScalingEnabled, doc.LayoutSpaceAnnotationScalingEnabled,
         }, PropertyJson));
