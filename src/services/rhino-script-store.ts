@@ -161,10 +161,14 @@ export class RhinoScriptStore {
 			.map((n) => n.slice(0, -5));
 	}
 	usage(): number {
-		return this.list("").reduce(
-			(sum, id) => sum + statSync(this.file(id)).size,
-			0,
-		);
+		if (!existsSync(this.directory)) return 0;
+		// Interrupted atomic writes remain inspectable and still consume quota.
+		return readdirSync(this.directory)
+			.filter((name) => name.endsWith(".json") || name.endsWith(".tmp"))
+			.reduce(
+				(sum, name) => sum + statSync(join(this.directory, name)).size,
+				0,
+			);
 	}
 	assertCapacity(
 		writes: Array<{ id: string; value: unknown }>,

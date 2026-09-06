@@ -364,4 +364,21 @@ describe("persistent source workspace", () => {
 		);
 		expect(w.resolve(asset.scriptId).revision).toBe(2);
 	});
+	it("preserves the committed record and accounts for an interrupted atomic write", () => {
+		const w = workspace(),
+			asset = create(w),
+			used = w.store.usage();
+		const orphan = join(
+			w.store.directory,
+			`${asset.scriptId}.json.interrupted.tmp`,
+		);
+		writeFileSync(orphan, "incomplete next revision");
+		const restarted = new RhinoScriptWorkspace(
+			join(w.store.directory, "../.."),
+		);
+		expect(restarted.resolve(asset.scriptId).revision).toBe(1);
+		expect(restarted.store.usage()).toBe(
+			used + Buffer.byteLength("incomplete next revision"),
+		);
+	});
 });
