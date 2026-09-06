@@ -1,6 +1,6 @@
 # Rhino and Grasshopper document management plan
 
-Status: implementation plan only. No runtime changes made.
+Status: implemented in this branch. See [implementation details and verification limits](document-management-implementation.md). The original plan below remains the acceptance reference.
 
 Date: 2026-09-06. Base: `26d0a2c`, from `t3code/self-host-pi-rhino`.
 

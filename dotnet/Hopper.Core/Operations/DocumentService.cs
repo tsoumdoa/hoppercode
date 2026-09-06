@@ -56,8 +56,13 @@ public abstract class DocumentService<T> where T : class
         catch (Exception error)
         {
             return DocumentSession.Result(new { ok = false, error = new { code = error is DocumentOperationException domain ? domain.Code : error is UnauthorizedAccessException ? "FILE_LOCKED" : "NATIVE_OPERATION_FAILED", message = error.Message },
-                effects, transaction = DocumentSession.Segment(Kind), outcomeUncertain = effects.Any(e => !e.Completed), activeDocumentId = Active == null ? null : Id(Active) });
+                effects, remainingDocuments = RemainingDocuments(), transaction = DocumentSession.Segment(Kind), outcomeUncertain = effects.Any(e => !e.Completed), activeDocumentId = Active == null ? null : Id(Active) });
         }
+    }
+    private object? RemainingDocuments()
+    {
+        try { return Documents.Select(doc => new { documentId = Id(doc), path = PathOf(doc), isActive = ReferenceEquals(doc, Active) }).ToArray(); }
+        catch { return null; } // Preserve the original error and known side effects if inventory refresh also fails.
     }
     private OperationResultV2 Manage(JsonElement args, List<DocumentEffect> effects)
     {

@@ -24,11 +24,15 @@ namespace rhino_zmq_poc
             RpcOperation.listScriptParams,
             RpcOperation.getScriptCode,
             RpcOperation.getParamRhinoGeometry,
+            RpcOperation.listGrasshopperDocuments,
+            RpcOperation.getGrasshopperDocument,
+            RpcOperation.getGrasshopperDocumentSettings,
         };
 
         private static readonly HashSet<RpcOperation> MutationOperations = new HashSet<RpcOperation>
         {
             RpcOperation.applyGraph,
+            RpcOperation.manageGrasshopperDocument,
             RpcOperation.addComponent,
             RpcOperation.deleteComponent,
             RpcOperation.connectWire,
@@ -84,6 +88,7 @@ namespace rhino_zmq_poc
         internal GrasshopperOperationAdapter(IHostDocumentStatusSink documentStatus)
         {
             _documentStatus = documentStatus ?? throw new ArgumentNullException(nameof(documentStatus));
+            DocumentSession.ReconcileGrasshopper = AgentTransaction.Reconcile;
         }
 
         internal void Start()
@@ -117,6 +122,8 @@ namespace rhino_zmq_poc
             if (request == null)
                 throw new ArgumentNullException(nameof(request));
 
+            if (request.Operation is RpcOperation.listGrasshopperDocuments or RpcOperation.getGrasshopperDocument or RpcOperation.getGrasshopperDocumentSettings or RpcOperation.manageGrasshopperDocument)
+                return GrasshopperDocumentOperations.Instance.Execute(request.Operation, request.Args);
             var document = ActiveDocument;
             if (document == null)
                 return Failure(
@@ -126,6 +133,9 @@ namespace rhino_zmq_poc
 
             try
             {
+                AgentTransaction.Reconcile();
+                DocumentSession.ValidateSegment("grasshopper", request.Args);
+                if (MutationOperations.Contains(request.Operation)) AgentTransaction.BeforeMutation();
                 if (QueryOperations.Contains(request.Operation))
                 {
                     if (!_queries.TryDispatch(
@@ -159,7 +169,7 @@ namespace rhino_zmq_poc
                     return Failure(RpcResultClass.failed, RpcReasonCode.OPERATION_FAILED, result);
 
                 return Completed(JsonSerializer.SerializeToElement(
-                    new { result },
+                    new { result, transaction = DocumentSession.Segment("grasshopper") },
                     RpcV2Contract.JsonOptions));
             }
             catch (Exception exception)
@@ -169,6 +179,7 @@ namespace rhino_zmq_poc
                     RpcReasonCode.OPERATION_FAILED,
                     $"{exception.GetType().Name}: {exception.Message}");
             }
+            finally { if (MutationOperations.Contains(request.Operation)) AgentTransaction.AfterMutation(); }
         }
 
         public void CleanupOpenTransactions()
@@ -221,7 +232,10 @@ namespace rhino_zmq_poc
                     root.Clone());
             }
 
-            return Completed(root.Clone());
+            var data = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(root.GetRawText());
+            data["transaction"] = JsonSerializer.SerializeToElement(DocumentSession.Segment("grasshopper"), RpcV2Contract.JsonOptions);
+            data["settings"] = JsonSerializer.SerializeToElement(GrasshopperDocumentOperations.Instance.CurrentSettings, RpcV2Contract.JsonOptions);
+            return Completed(JsonSerializer.SerializeToElement(data, RpcV2Contract.JsonOptions));
         }
 
         private static bool IsFailure(string result) =>
