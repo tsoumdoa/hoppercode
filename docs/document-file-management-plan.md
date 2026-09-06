@@ -1,4 +1,4 @@
-# Rhino and Grasshopper file management plan
+# Rhino and Grasshopper document management plan
 
 Status: implementation plan only. No runtime changes made.
 
@@ -10,6 +10,8 @@ Worktree: `/Users/tomohirosugeta/repo/hoppercode-file-management`.
 ## Outcome
 
 Give the agent explicit tools to inspect, create, open, activate, save, save as, and close Rhino and Grasshopper documents. A request must identify the document it will affect, handle unsaved changes deliberately, and return the resulting document and file state. The agent must be able to open a document when no document is currently open.
+
+Include document settings inspection so the agent understands model units and tolerances before constructing or evaluating geometry. File lifecycle and modeling settings share document identity, but inspecting settings never changes or saves the model.
 
 The first release supports native `.3dm`, `.gh`, and `.ghx` files. File dialogs must not be required for normal successful operations. Use Rhino 8 on macOS and Windows as the compatibility targets.
 
@@ -34,6 +36,7 @@ Add two discoverable tools, `rh_document` and `gh_document`, with the same actio
 | --- | --- | --- |
 | `list` | None | Open documents in the connected Rhino process, active handle, and host capabilities. Empty is valid. |
 | `get` | `documentId` | Current metadata for that exact live document. |
+| `getSettings` | `documentId` | Rhino model/layout settings, or GH's resolved Rhino modeling context with its source identity and settings revision. Read-only. |
 | `browse` | Absolute directory `path`, optional cursor | Return a bounded, nonrecursive list of subdirectories and native CAD files so the agent can discover paths. No document or GH startup required. |
 | `new` | `expectedActiveDocument`; explicit template path if needed; `affectedDocuments` when replacing | Create and activate an unnamed document. Report any replacement. |
 | `open` | Absolute native-file `path`, `expectedActiveDocument`, `affectedDocuments` when replacing | Open and activate, or activate an already-open matching file. Report `alreadyOpen`. |
@@ -57,6 +60,47 @@ Maintain a monotonic observed-change revision for every managed live document, n
 Reuse native monotonic change counters where the pinned SDK guarantees the required coverage, otherwise add owner-specific subscriptions and native-write scopes. Native spikes must prove the coverage before tokens are advertised as protecting discard operations. If an edit class lacks reliable notifications, use a verified persistent-state fingerprint at observation and destructive execution, or return `STATE_VALIDATION_UNAVAILABLE` for destructive requests on that target. Do not silently downgrade to the dirty boolean or claim that the existing monitors cover all edits. Subscribe/unsubscribe on inventory add/remove and invalidate handles before disposing native objects.
 
 Capabilities describe native multi-document behavior, supported file types, and any unavailable action. `list` on an unloaded GH adapter returns capability state without launching GH; mutating GH actions may use existing lazy startup. `get` of a stale handle does not launch another session.
+
+## Document settings and agent interpretation
+
+This feature belongs to document management, with a separate native settings reader behind the same tools. The requested scope is awareness: include `getSettings` in v1 and return a compact settings summary from `get`. Do not require a settings editor or geometry rescaling to deliver inspection.
+
+### Rhino settings
+
+Read the exact target RhinoDoc on the UI thread and return a typed snapshot with `documentId`, `lifecycleInstanceId`, `settingsRevision`, and the following fields:
+
+| Field | Meaning |
+| --- | --- |
+| `model.units` | Unit enum/name, known meters-per-unit conversion, and custom-unit name/scale when available. Represent unitless or unknown explicitly. |
+| `model.absoluteTolerance` | Native absolute tolerance expressed in the reported model units. |
+| `model.angleToleranceRadians` / `model.angleToleranceDegrees` | Both labeled representations of the same native angle tolerance. |
+| `model.relativeToleranceRatio` | Native relative tolerance normalized to a documented dimensionless ratio; verify API/UI percentage conversion against Rhino 8. |
+| `model.distanceDisplayPrecision` | Number of displayed decimal places, separate from computational tolerance. |
+| `layout` | Separately labeled page units and available page tolerances/precision. Never use these as model-space settings. |
+
+Use the pinned SDK's `ModelUnitSystem`, `ModelAbsoluteTolerance`, `ModelAngleToleranceRadians`, `ModelRelativeTolerance`, display-precision properties, and page/custom-unit equivalents after verifying availability. Preserve native values, including unusual/invalid values, with diagnostics rather than silently substituting defaults. Do not present a unit conversion for unitless/custom units without a known scale. Reading must not activate a different document, open a dialog, start a transaction, modify the dirty flag, or trigger a GH solution.
+
+`settingsRevision` changes for relevant unit/tolerance/precision or context changes, independently of ordinary geometry edits. It supplements the existing full-document state token. Track native Properties dialog changes, template/new/open/SaveAs effects, Undo/Redo, and programmatic settings changes. Cache only by document identity plus settings revision; no global assumption that all open files use millimeters.
+
+### Grasshopper context
+
+`gh_document.getSettings` reports the selected definition's associated Rhino document when discoverable, the currently active Rhino document, and the actual source used for reported effective units/tolerances. Include `resolutionSource`, source document/settings revision, and `contextMismatch` when association and active document differ. Do not assert that every component follows the association: standard GH tolerance helpers can use the active Rhino document, while custom components and explicit tolerance inputs can choose differently. Verify behavior against the pinned Rhino 8 adapter and identify unknown resolution rather than inventing settings.
+
+If no Rhino context exists, return `unresolved` with null values, not default millimeters or fabricated tolerances. Inspection must not silently create a Rhino document. GH-native solver enabled state can be included as context, but editing solver/preview settings is outside this units-and-tolerance addition. A GH file should not be described as independently storing Rhino model settings unless a verified native API exposes that behavior.
+
+### How the agent uses this information
+
+- Include a small units/tolerance/source/revision summary in normal Rhino object-query and GH canvas-query results where context can be resolved. Tool instructions require inspecting current settings before work whose dimensions or tolerance depend on them. Refresh on document/context/settings change, rather than requiring the user to state settings every turn.
+- Convert explicit physical dimensions into the target document's units before supplying numeric geometry coordinates. For example, a requested 2-meter length is 2000 model units in a millimeter document. If the document is unitless or the intended physical scale is unknown, ask only when that ambiguity affects the requested result.
+- Use the observed tolerance when an operation requires a tolerance parameter, with the units expected by that API. GH helpers do not all use the same angle representation; verify degrees versus radians. A document tolerance is not a guarantee that all existing geometry meets it or that every plugin obeys it.
+- Preserve user/component-specific overrides. A GH numeric input can be a length, angle, ratio, count, or custom value; do not rescale every number based on model units. Display precision does not justify rounding stored geometry or changing a tolerance.
+- Do not change document units or loosen tolerance automatically to make a failed Boolean/join operation succeed. Report the settings used and inspect the failure. Settings reads remain usable for understanding the document without authorizing writes.
+
+### Future settings changes
+
+Reserve a separate `rh_document.setSettings` action for a subsequent editing increment. It would use target/state preconditions, typed validation, before/after snapshots, and verified Undo for settings and geometry scaling. It must remain distinct from non-undoable file-save boundaries and must not autosave. The current addition does not implement that action.
+
+Unit changes must explicitly choose `scaleGeometry: true` to preserve physical size or `false` to retain numeric coordinates. For millimeters to meters, a length of 1000 becomes 1 in the first case; retaining 1000 makes its physical length 1000 meters in the second. Specify what happens to absolute tolerance after conversion and return the actual result. Do not assume changing Rhino units also rescales GH slider values, internalized geometry, or component-specific parameters. Resolve genuine scale ambiguity from the user's request before a write, without adding repeat approval to an already specified change.
 
 ## Paths, overwrites, and unsaved changes
 
@@ -96,7 +140,7 @@ Rhino and GH documents are independent targets. Closing a Rhino model must not i
 
 ## Routing, ordering, and undo
 
-1. Add separate read and mutation RPC operations for each owner, for example `listRhinoDocuments`, `getRhinoDocument`, `manageRhinoDocument`, and GH equivalents. List/get are queries; all lifecycle and write actions are retained mutations with operation IDs. Add shared `browseDocumentFiles` as a Core-routed filesystem query with no native document requirement or GH startup.
+1. Add separate read and mutation RPC operations for each owner, for example `listRhinoDocuments`, `getRhinoDocument`, `getRhinoDocumentSettings`, `manageRhinoDocument`, and GH equivalents. List/get/getSettings are queries; all lifecycle and write actions are retained mutations with operation IDs. Add shared `browseDocumentFiles` as a Core-routed filesystem query with no native document requirement or GH startup.
 2. Extend operation metadata with active-document requirements and undo behavior. Separate `requires adapter loaded` from `requires active document`. Open/new/list must work with zero documents. Save/get/close resolve the requested handle rather than relying on whichever document is active. Handle the unloaded-GH `list` response through Core capability status before adapter dispatch, and exempt that query from Node's automatic GH startup. An empty list with an unavailable/not-loaded capability is different from a loaded adapter reporting zero documents.
 3. Update TypeScript and C# operation inventories, schema, metadata, fixtures, adapters, and the cross-language checks together. Retain protocol v2 envelopes; use additive operations with domain errors in result data. An older backend must return a clear unsupported capability.
 4. Treat every file mutation and activation as a document transition boundary. Finish any editing transactions that could be affected before the transition, retaining their Undo entry. Clear the corresponding Node transaction flags and lazily begin a new editing segment for later geometry/canvas edits. A failed transition also leaves the previous segment finished.
@@ -121,7 +165,7 @@ The boundary must also cover native UI save/saveAs/open/close/activation/Undo/Re
 ## Implementation sequence
 
 1. **SDK spike and fixtures.** Compile tiny adapters against the pinned Rhino 8 packages, then exercise open/activate/close-last/saveAs and GH save/dirty-state behavior on disposable files. Record the macOS/Windows behavior matrix. Resolve the non-dialog close and Windows replacement paths before building tool wrappers.
-2. **Contracts and document identity.** Add DTOs, handles, state tokens, capabilities, domain errors, inventories, and tests for no-document routing and stale targets. Add read tools so the agent can inspect targets.
+2. **Contracts and document identity.** Add DTOs, handles, state tokens, capabilities, domain errors, inventories, and tests for no-document routing and stale targets. Add settings readers, unit/tolerance source metadata, and settings revisions so the agent can inspect and interpret targets.
 3. **Transition coordinator.** Implement commit-and-transition ordering, transaction flag reconciliation, native UI dispatch, and fault handling. Extend runtime ownership/readiness tests and Core router tests.
 4. **Rhino operations.** Implement new/open/activate/save/saveAs/close with native writers, explicit unsaved policy, and file conflict checks.
 5. **GH operations.** Implement the same actions with document-server registration, canvas activation, and full serialization round trips.
@@ -147,6 +191,10 @@ Likely new files: `src/tools/rh-document.ts`, `src/tools/gh-document.ts`, `src/s
 - Lose the transition reply after native completion, then attempt edit/cancel. Reconcile transaction epochs first; no old snapshot is applied to any document. Cover failure to commit and partial pre-save-success/close-failure results.
 - Modify inactive documents, already-dirty objects/layers, and GH wires/script source with its solver disabled. Verify state tokens change for persisted edits and do not churn for an unchanged repeated solution.
 - Browse a directory with mixed native files/subdirectories, Unicode paths, denied entries, and pagination with GH unloaded and no active model. No GH startup or file contents are needed.
+- Read units/tolerances from metric, imperial, custom-unit, and unitless documents, including differing model/layout units. Compare values to Rhino's Properties UI and verify angle and relative-tolerance conversions. No read modifies the file, dirty state, active document, or GH solution state.
+- Change settings through native UI/scripts and Undo/Redo; inspect inactive targets and open another file with different settings. Settings summaries refresh without reusing another document's units. Save/reopen a disposable file to verify settings inspection reflects serialized values.
+- Associate a GH definition with Rhino A while Rhino B is active with different units/tolerances. Report source/association differences and verify standard helper behavior; preserve explicit component overrides and return unresolved context without any Rhino document.
+- Agent workflow examples use 2000 numeric units for a requested 2 meters in a millimeter document and leave dimensionless/count inputs unchanged. Examples distinguish display precision from tolerance and do not change settings to hide a modeling failure.
 
 Run focused Vitest suites during implementation, then `pnpm test`, `pnpm build`, `pnpm test:rpc-cross-language`, `dotnet test dotnet/Hopper.Core.Tests/Hopper.Core.Tests.csproj`, `dotnet test grasshopper-plugin.Tests/grasshopper-plugin.Tests.csproj`, and `pnpm build:gh-plugin`. Native Rhino 8 smoke tests are additional requirements, not covered by fake executors.
 
@@ -163,6 +211,9 @@ The independent plan in branch `plan/rhino-virtual-scripts`, `docs/rhino-virtual
 - [Rhino 8 document API](https://developer.rhino3d.com/api/rhinocommon/rhino.rhinodoc?version=8.x) is the starting point for the native spike.
 - [GH_DocumentIO](https://developer.rhino3d.com/api/grasshopper/html/Methods_T_Grasshopper_Kernel_GH_DocumentIO.htm) exposes path-based open/save methods.
 - [GH_DocumentServer.SafeRemoveDocument](https://developer.rhino3d.com/api/grasshopper/html/M_Grasshopper_Kernel_GH_DocumentServer_SafeRemoveDocument.htm) documents UI prompts on unsaved data; it is not automatically an unattended close solution.
+- [Rhino units properties](https://docs.mcneel.com/rhino/8/help/en-us/documentproperties/units.htm) distinguishes model/layout units, tolerance, geometry scaling, and display precision.
+- [RhinoDoc properties](https://mcneel.github.io/rhinocommon-api-docs/api/RhinoCommon/html/Properties_T_Rhino_RhinoDoc.htm) exposes the native model/page settings used by the reader.
+- [GH component helpers](https://developer.rhino3d.com/api/grasshopper/html/Methods_T_Grasshopper_Kernel_GH_Component.htm) documents active-Rhino-document tolerance helpers; [GH Utility](https://developer.rhino3d.com/api/grasshopper/html/Methods_T_Grasshopper_Utility.htm) uses degrees for its angle-tolerance helper. Verify the exact API used rather than assuming a uniform angle unit.
 
 Online GH API pages currently describe newer builds. Verify every selected method against the pinned Rhino 8 assemblies. No native smoke test was performed while writing this plan.
 
