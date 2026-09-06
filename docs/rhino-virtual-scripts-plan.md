@@ -72,6 +72,8 @@ The existing `{ "mode": "python|csharp|command", "source": "...", "echo": false 
 
 Require a revision for asset execution. Resolve that immutable revision before queuing the run. A later edit must not change code already queued for execution. Return `scriptId`, executed revision, source hash, document identity, operation ID, output, and success/failure/unknown outcome.
 
+When document settings inspection is available, `getExecutionTarget` also returns the target's units, tolerances, and `settingsRevision` from the shared document settings reader. Asset runs may supply `expectedSettingsRevision` to reject a units/tolerance change between inspection and execution with `DOCUMENT_SETTINGS_CHANGED`. Record the actual settings snapshot at run start in the run journal. The check does not prevent the script itself from changing settings later. Source patching never changes document settings. Reuse the document-management contract; an older backend must report the inspection/precondition as unsupported rather than fabricate defaults or silently ignore a supplied revision.
+
 ## Patch semantics
 
 - Support line-based `insert`, `replace`, and `delete` for both languages. Full source is the only scope in v1; there is no inferred C# `RunScript` wrapper.
