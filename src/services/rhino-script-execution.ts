@@ -313,23 +313,29 @@ export class RhinoScriptExecution {
 				? { preview: encodedSettings.slice(0, 1000), truncated: true }
 				: rawSettings;
 		return {
-			state: /DOCUMENT_(CHANGED|SETTINGS_CHANGED)/.test(
-				result.reasonCode + " " + result.message,
-			)
-				? "notStarted"
-				: result.class === "completed"
-					? data?.ok === false
-						? "failed"
-						: "completed"
-					: [
-								"deadline_exceeded_before_start",
-								"cancelled_before_start",
-								"busy",
-								"capability_unavailable",
-								"shutting_down",
-						  ].includes(result.class)
-						? "notStarted"
-						: "failed",
+			state:
+				[
+					"DOCUMENT_CHANGED",
+					"DOCUMENT_SETTINGS_CHANGED",
+					"SETTINGS_CHANGED",
+				].includes(result.reasonCode) ||
+				/^(DOCUMENT_CHANGED|DOCUMENT_SETTINGS_CHANGED|SETTINGS_CHANGED):/.test(
+					result.message ?? "",
+				)
+					? "notStarted"
+					: result.class === "completed"
+						? data?.ok === false
+							? "failed"
+							: "completed"
+						: [
+									"deadline_exceeded_before_start",
+									"cancelled_before_start",
+									"busy",
+									"capability_unavailable",
+									"shutting_down",
+							  ].includes(result.class)
+							? "notStarted"
+							: "failed",
 			result:
 				encoded.length > 12_000
 					? { preview: encoded.slice(0, 12_000), truncated: true }

@@ -279,4 +279,19 @@ describe("durable execution admission", () => {
 		expect(result.runs[0].error).toContain("partial geometry exists");
 		expect(execution.getRun(result.runs[0].runId).state).toBe("failed");
 	});
+	it("classifies native settings precondition rejections as notStarted", async () => {
+		for (const code of ["SETTINGS_CHANGED", "DOCUMENT_SETTINGS_CHANGED"]) {
+			const { backend, execution, item } = setup();
+			vi.mocked(backend.run).mockResolvedValue({
+				class: "failed",
+				reasonCode: "OPERATION_FAILED",
+				message: `${code}: Inspect the new settings`,
+			});
+			const result = await execution.runBatch([item, item], code);
+			expect(result.runs.map((run) => run.state)).toEqual([
+				"notStarted",
+				"notRun",
+			]);
+		}
+	});
 });
