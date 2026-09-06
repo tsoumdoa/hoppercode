@@ -30,9 +30,9 @@ internal sealed class GrasshopperDocumentOperations : DocumentService<GH_Documen
     {
         if (!_handles.TryGetValue(doc, out var id)) {
             _handles[doc] = id = Guid.NewGuid().ToString("N");
-            GH_Document.FilePathChangedEventHandler pathChanged = (_, _) => AgentTransaction.AbandonActive();
-            GH_Document.ModifiedChangedEventHandler modified = (_, _) => { if (!doc.IsModified) { AgentTransaction.ObserveSaved(); ObserveNativeSave(doc); } };
-            GH_Document.UndoStateChangedEventHandler undo = (_, _) => AgentTransaction.AbandonExternal();
+            GH_Document.FilePathChangedEventHandler pathChanged = (_, _) => AgentTransaction.ObservePathChanged(doc);
+            GH_Document.ModifiedChangedEventHandler modified = (_, _) => { if (!doc.IsModified) { AgentTransaction.ObserveSaved(doc); ObserveNativeSave(doc); } };
+            GH_Document.UndoStateChangedEventHandler undo = (_, _) => AgentTransaction.AbandonExternal(doc);
             doc.FilePathChanged += pathChanged; doc.ModifiedChanged += modified; doc.UndoStateChanged += undo;
             _unsubscribe[doc] = () => { doc.FilePathChanged -= pathChanged; doc.ModifiedChanged -= modified; doc.UndoStateChanged -= undo; };
         }
@@ -41,6 +41,7 @@ internal sealed class GrasshopperDocumentOperations : DocumentService<GH_Documen
     public string? ActiveId => Active == null ? null : Id(Active);
     protected override string? PathOf(GH_Document doc) => doc.FilePath;
     protected override bool Modified(GH_Document doc) => doc.IsModified;
+    protected override void MarkModified(GH_Document doc) => doc.IsModified = true;
     protected override string Fingerprint(GH_Document doc)
     {
         var bytes = DocumentSnapshots.Serialize(doc) ?? throw new DocumentOperationException("STATE_VALIDATION_UNAVAILABLE", "Cannot serialize all persisted Grasshopper document state.");
@@ -91,12 +92,10 @@ internal sealed class GrasshopperDocumentOperations : DocumentService<GH_Documen
             io.Document.FilePath = null;
             io.Document.IsModified = true;
             Instances.DocumentServer.AddDocument(io.Document);
-            Activate(io.Document);
             return io.Document;
         }
         var document = new GH_Document();
         Instances.DocumentServer.AddDocument(document);
-        Activate(document);
         return document;
     }
     protected override GH_Document Open(string path)
@@ -105,7 +104,6 @@ internal sealed class GrasshopperDocumentOperations : DocumentService<GH_Documen
         if (!io.Open(path) || io.Document == null) throw new DocumentOperationException("NATIVE_OPEN_FAILED", "Grasshopper failed to deserialize the definition.");
         var document = io.Document;
         Instances.DocumentServer.AddDocument(document);
-        Activate(document);
         return document;
     }
     protected override void Activate(GH_Document doc)

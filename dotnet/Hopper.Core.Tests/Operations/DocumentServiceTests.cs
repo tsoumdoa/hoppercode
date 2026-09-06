@@ -77,6 +77,14 @@ public sealed class DocumentServiceTests : IDisposable
         var service = new FakeService(); var doc = service.Add(null, true); var observed = service.Describe(doc);
         var response = Manage(service, new { action = "saveAs", documentId = observed.DocumentId, expectedStateToken = observed.StateToken, path = FilePath("new") });
         Assert.True(response.GetProperty("ok").GetBoolean()); Assert.Equal(1, service.Boundaries); Assert.Equal(1, service.Writes); Assert.False(doc.Dirty);
+        Assert.Single(response.GetProperty("effects").EnumerateArray(), e => e.GetProperty("stage").GetString() == "save");
+    }
+    [Fact] public void CloseReportsOnlyOneEffectWithTheClosedDocumentHandle()
+    {
+        var service = new FakeService(); var doc = service.Add(null, false); var observed = service.Describe(doc);
+        var response = Manage(service, new { action = "close", documentId = observed.DocumentId, expectedStateToken = observed.StateToken });
+        var close = Assert.Single(response.GetProperty("effects").EnumerateArray(), e => e.GetProperty("stage").GetString() == "close");
+        Assert.Equal(observed.DocumentId, close.GetProperty("documentId").GetString());
     }
     [Fact] public void NativeSaveRefreshesExternalConflictBaseline()
     {
@@ -138,7 +146,8 @@ public sealed class DocumentServiceTests : IDisposable
     [Fact] public void PreSaveCallbackEditCannotBeDiscardedByClose()
     {
         var service = new FakeService(); var target = service.Add(null, true); var observed = service.Describe(target);
-        service.OnWrite = () => { target.Revision++; target.Dirty = true; };
+        // Native writers may clear the dirty bit after their callbacks run.
+        service.OnWrite = () => { target.Revision++; target.Dirty = false; };
         var response = Manage(service, new { action = "close", documentId = observed.DocumentId, expectedStateToken = observed.StateToken, onUnsaved = "save", savePath = FilePath("callback-edit") });
         Assert.Equal("DOCUMENT_CHANGED", response.GetProperty("error").GetProperty("code").GetString());
         Assert.Equal(0, service.Closes); Assert.Same(target, service.Current); Assert.True(target.Dirty);
@@ -155,6 +164,7 @@ public sealed class DocumentServiceTests : IDisposable
         protected override string NativeId(FakeDoc doc) => doc.Id;
         protected override string? PathOf(FakeDoc doc) => doc.Path;
         protected override bool Modified(FakeDoc doc) => doc.Dirty;
+        protected override void MarkModified(FakeDoc doc) => doc.Dirty = true;
         protected override string Fingerprint(FakeDoc doc) => doc.Revision.ToString();
         protected override object Settings(FakeDoc doc) => new { units = "Millimeters" };
         protected override void FinishSegment() { Boundaries++; OnFinish?.Invoke(); }

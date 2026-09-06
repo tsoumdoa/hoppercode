@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Hopper.Core.Operations;
 using Rhino;
 using Rhino.FileIO;
@@ -111,9 +112,29 @@ internal sealed class RhinoDocumentOperations : DocumentService<RhinoDoc>, IDisp
     protected override string NativeId(RhinoDoc doc) => doc.RuntimeSerialNumber.ToString();
     protected override string? PathOf(RhinoDoc doc) => doc.Path;
     protected override bool Modified(RhinoDoc doc) => doc.Modified;
+    protected override void MarkModified(RhinoDoc doc) => doc.Modified = true;
     protected override bool ReplacesActive => OperatingSystem.IsWindows();
-    protected override string Fingerprint(RhinoDoc doc) => _revisions.GetValueOrDefault(doc.RuntimeSerialNumber) + "|" + JsonSerializer.Serialize(Settings(doc));
-    protected override string TransitionFingerprint(RhinoDoc doc) => _contentRevisions.GetValueOrDefault(doc.RuntimeSerialNumber) + "|" + SettingsRevision(doc);
+    protected override string Fingerprint(RhinoDoc doc) => _revisions.GetValueOrDefault(doc.RuntimeSerialNumber) + "|" + SettingsRevision(doc) + "|" + PersistedPropertiesRevision(doc);
+    protected override string TransitionFingerprint(RhinoDoc doc) => _contentRevisions.GetValueOrDefault(doc.RuntimeSerialNumber) + "|" + SettingsRevision(doc) + "|" + PersistedPropertiesRevision(doc);
+    private static readonly JsonSerializerOptions PropertyJson = new() { NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals };
+    private static string PersistedPropertiesRevision(RhinoDoc doc)
+    {
+        // DocumentPropertiesChanged also fires for save-derived path/date metadata.
+        // Compare the supported persisted property values instead of ignoring that
+        // entire event category during a write. RenderSettings' native archive
+        // includes nested render settings without maintaining a second field list.
+        using var render = doc.RenderSettings;
+        using var earth = doc.EarthAnchorPoint;
+        using var mesh = doc.GetMeshingParameters(Rhino.Geometry.MeshingParameterStyle.Custom);
+        using var analysisMesh = doc.GetAnalysisMeshingParameters();
+        return DocumentSession.Digest(JsonSerializer.Serialize(new {
+            doc.Notes, doc.ModelBasepoint, earth,
+            render = render.ToJSON(new SerializationOptions { WriteUserData = true }),
+            doc.AnimationProperties, doc.CustomRenderSizes, doc.MeshingParameterStyle, mesh, analysisMesh,
+            doc.ModelSpaceHatchScale, doc.ModelSpaceHatchScalingEnabled,
+            doc.ModelSpaceTextScale, doc.ModelSpaceAnnotationScalingEnabled, doc.LayoutSpaceAnnotationScalingEnabled,
+        }, PropertyJson));
+    }
     public object ReadSettings(string? id) => Settings(id == null ? Active ?? throw new DocumentOperationException("DOCUMENT_NOT_FOUND", "No active Rhino document.") : Resolve(id));
     public string? ActiveId => Active == null ? null : Id(Active);
     public void EnsureDocumentReady() { if (OperatingSystem.IsMacOS()) MacDocumentWindows.EnsureSettled(); }

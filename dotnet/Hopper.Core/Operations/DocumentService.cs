@@ -12,6 +12,7 @@ public abstract class DocumentService<T> where T : class
     protected abstract string NativeId(T document);
     protected abstract string? PathOf(T document);
     protected abstract bool Modified(T document);
+    protected abstract void MarkModified(T document);
     protected abstract string Fingerprint(T document);
     // Persisted content only: native overrides exclude path/dirty changes caused by a successful write.
     protected virtual string TransitionFingerprint(T document) => Fingerprint(document);
@@ -124,7 +125,6 @@ public abstract class DocumentService<T> where T : class
         else if (action is "save" or "saveAs") Save(doc!, path ?? PathOf(doc!)!, args, effects);
         else if (action == "close") { var id = Id(doc!); var closePath = PathOf(doc!); effects.Add(new("close", id, closePath, false)); Close(doc!); effects[^1] = new("close", id, closePath, true); doc = null; }
         if (action is "new" or "open" or "activate") effects[^1] = new(action, doc == null ? null : Id(doc), doc == null ? null : PathOf(doc), true);
-        else effects.Add(new(action, doc == null ? null : Id(doc), doc == null ? null : PathOf(doc), true));
         DocumentSession.Advance(Kind, null, "idle");
         return DocumentSession.Result(new { ok = true, document = doc == null ? null : Describe(doc), alreadyOpen = already != null,
             effects, outcomeUncertain = false, state = List(), transaction = DocumentSession.Segment(Kind) });
@@ -179,8 +179,10 @@ public abstract class DocumentService<T> where T : class
         if (!Write(doc, path)) throw new DocumentOperationException("NATIVE_WRITE_FAILED", "Native writer reported failure.");
         effects[^1] = new("save", Id(doc), path, true);
         _files[Id(doc)] = (PathOf(doc), DocumentFiles.Stamp(PathOf(doc)));
-        if (beforeWrite != TransitionFingerprint(doc))
+        if (beforeWrite != TransitionFingerprint(doc)) {
+            MarkModified(doc);
             throw new DocumentOperationException("DOCUMENT_CHANGED", "The file was saved, but a native callback changed document content during the write. Inspect it again before closing or replacing it.");
+        }
     }
     protected static string Required(JsonElement args, string key) => Optional(args, key)
         ?? throw new DocumentOperationException("INVALID_ARGUMENT", $"{key} is required.");

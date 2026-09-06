@@ -14,7 +14,8 @@ namespace rhino_zmq_poc
         private static string _lastPath;
         private static bool _managedMutation;
         private static bool _completing;
-        public static void ObserveSaved() { if (!_completing) AbandonActive(); }
+        public static void ObserveSaved(GH_Document document) { if (!_completing && State.IsBoundTo(document)) AbandonActive(); }
+        public static void ObservePathChanged(GH_Document document) { if (State.IsBoundTo(document)) AbandonActive(); }
         public static void BeforeMutation() { Reconcile(); _managedMutation = true; }
         public static void AfterMutation() { if (_boundDocument != null && State.IsActive) { _lastAgentSnapshot = DocumentSnapshots.Serialize(_boundDocument); _lastPath = _boundDocument.FilePath; if (_lastAgentSnapshot == null) AbandonActive(); } _managedMutation = false; }
         public static void Reconcile() {
@@ -22,7 +23,7 @@ namespace rhino_zmq_poc
             if (_lastAgentSnapshot == null || _boundDocument == null || _boundDocument != Instances.ActiveCanvas?.Document || _boundDocument.FilePath != _lastPath
                 || !DocumentSnapshots.AreEqual(_lastAgentSnapshot, DocumentSnapshots.Serialize(_boundDocument))) AbandonActive();
         }
-        public static void AbandonExternal() { if (!_managedMutation) AbandonActive(); }
+        public static void AbandonExternal(GH_Document document) { if (!_managedMutation && State.IsBoundTo(document)) AbandonActive(); }
         public static void AbandonActive() {
             if (State.IsActive) State.Complete((_, __) => true);
             _boundDocument = null; _lastAgentSnapshot = null; _transactionName = null;

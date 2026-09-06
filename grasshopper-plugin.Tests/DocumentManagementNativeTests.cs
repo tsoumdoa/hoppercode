@@ -34,12 +34,14 @@ public static class DocumentManagementNativeTests
         {
             File.AppendAllText(Path.Combine(root, "progress.log"), "Rhino lifecycle started\n");
             RhinoLifecycle(root);
+            RhinoSaveCallbacksPreserveProperties(root);
             if (originalRhino != null) MacDocumentWindows.Activate(originalRhino);
             File.AppendAllText(Path.Combine(root, "progress.log"), "Grasshopper lifecycle started\n");
             GrasshopperLifecycle(root);
             File.AppendAllText(Path.Combine(root, "progress.log"), "Grasshopper external save started\n");
             GrasshopperExternalSavePreservesCurrentState(root);
             GrasshopperSaveCallbackRemainsDirty(root);
+            GrasshopperBackgroundEventsPreserveActiveTransaction(root);
         }
         catch (Exception error) { testFailure = error; }
         finally
@@ -139,6 +141,41 @@ public static class DocumentManagementNativeTests
             expectedStateToken = service.Describe(reopened).StateToken, onUnsaved = "fail" });
     }
 
+    private static void RhinoSaveCallbacksPreserveProperties(string root)
+    {
+        var service = RhinoDocumentOperations.Instance;
+        var edits = new (string Name, Action<RhinoDoc> Edit)[] {
+            ("notes", doc => doc.Notes = "notes changed after native save"),
+            ("basepoint", doc => doc.ModelBasepoint = new Point3d(91, 82, 73)),
+            ("render", doc => { using var settings = doc.RenderSettings; settings.ImageDpi = 123; doc.RenderSettings = settings; }),
+            ("earth", doc => { using var anchor = doc.EarthAnchorPoint; anchor.Name = "changed after save"; doc.EarthAnchorPoint = anchor; }),
+        };
+        foreach (var edit in edits)
+        {
+            var created = Success(service, RpcOperation.manageRhinoDocument, new { action = "new", expectedActiveDocument = service.ActiveId });
+            var id = created.GetProperty("document").GetProperty("documentId").GetString()!;
+            var doc = service.Resolve(id);
+            doc.Objects.AddPoint(Point3d.Origin);
+            var callbacks = 0;
+            EventHandler<Rhino.DocumentSaveEventArgs> callback = (_, e) => {
+                if (e.Document != doc) return;
+                callbacks++;
+                edit.Edit(doc);
+            };
+            RhinoDoc.EndSaveDocument += callback;
+            var path = Path.Combine(root, "property-callback-" + edit.Name + ".3dm");
+            try { Error(service, RpcOperation.manageRhinoDocument, new { action = "close", documentId = id,
+                expectedStateToken = service.Describe(doc).StateToken, onUnsaved = "save", savePath = path }, "DOCUMENT_CHANGED"); }
+            finally { RhinoDoc.EndSaveDocument -= callback; }
+            Assert.True(callbacks > 0, edit.Name + " save callback did not run");
+            Assert.True(File.Exists(path));
+            Assert.Same(doc, service.Resolve(id));
+            Assert.True(doc.Modified, edit.Name + " change must remain unsaved");
+            Success(service, RpcOperation.manageRhinoDocument, new { action = "close", documentId = id,
+                expectedStateToken = service.Describe(doc).StateToken, onUnsaved = "discard" });
+        }
+    }
+
     private static void GrasshopperLifecycle(string root)
     {
         var service = GrasshopperDocumentOperations.Instance;
@@ -222,6 +259,49 @@ public static class DocumentManagementNativeTests
         Assert.Equal("preserve after native save", Assert.Single(doc.Objects.OfType<GH_Panel>()).UserText);
         Success(service, RpcOperation.manageGrasshopperDocument, new { action = "close", documentId = id,
             expectedStateToken = service.Describe(doc).StateToken, onUnsaved = "fail" });
+    }
+
+    private static void GrasshopperBackgroundEventsPreserveActiveTransaction(string root)
+    {
+        var service = GrasshopperDocumentOperations.Instance;
+        var first = Success(service, RpcOperation.manageGrasshopperDocument, new { action = "new", expectedActiveDocument = service.ActiveId });
+        var firstId = first.GetProperty("document").GetProperty("documentId").GetString()!;
+        var foreground = service.Resolve(firstId);
+        var second = Success(service, RpcOperation.manageGrasshopperDocument, new { action = "new", expectedActiveDocument = service.ActiveId });
+        var secondId = second.GetProperty("document").GetProperty("documentId").GetString()!;
+        var background = service.Resolve(secondId);
+        Success(service, RpcOperation.manageGrasshopperDocument, new { action = "activate", documentId = firstId, expectedActiveDocument = service.ActiveId });
+        Assert.Contains("started", AgentTransaction.Begin(foreground));
+        AgentTransaction.BeforeMutation();
+        try {
+            var panel = new GH_Panel { UserText = "cancel this foreground edit" };
+            panel.CreateAttributes(); foreground.AddObject(panel, false); foreground.IsModified = true;
+        }
+        finally { AgentTransaction.AfterMutation(); }
+
+        background.FilePath = Path.Combine(root, "background.gh");
+        Assert.True(AgentTransaction.IsActive, "Background path changes must not abandon the foreground transaction");
+        background.IsModified = true;
+        Assert.True(new GH_DocumentIO { Document = background }.SaveQuiet(background.FilePath));
+        background.IsModified = false;
+        Assert.True(AgentTransaction.IsActive, "Background saves must not abandon the foreground transaction");
+        var undoEvents = 0;
+        GH_Document.UndoStateChangedEventHandler undo = (_, _) => undoEvents++;
+        background.UndoStateChanged += undo;
+        try {
+            var snapshot = DocumentSnapshots.Serialize(background);
+            background.UndoUtil.RecordEvent("Background edit", new DocumentSnapshotUndoAction(snapshot, snapshot));
+        }
+        finally { background.UndoStateChanged -= undo; }
+        Assert.True(undoEvents > 0, "The background Undo event did not run");
+        Assert.True(AgentTransaction.IsActive, "Background Undo events must not abandon the foreground transaction");
+        Assert.Contains("reverted", AgentTransaction.CancelActive());
+        Assert.Empty(foreground.Objects.OfType<GH_Panel>());
+        foreach (var doc in new[] { foreground, background }) {
+            var observed = service.Describe(doc);
+            Success(service, RpcOperation.manageGrasshopperDocument, new { action = "close", documentId = observed.DocumentId,
+                expectedStateToken = observed.StateToken, onUnsaved = "discard" });
+        }
     }
 
     private static GH_Document[] GhDocuments() => Enumerable.Range(0, Instances.DocumentServer.DocumentCount)
