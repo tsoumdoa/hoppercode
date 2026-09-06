@@ -428,9 +428,22 @@ export class RhinoScriptExecution {
 			const results: ReturnType<typeof publicRun>[] = [];
 			let stop = false;
 			for (const initial of batch.runs) {
-				let run = this.getRun(initial.runId);
+				let run: RunRecord;
+				try {
+					run = this.getRun(initial.runId);
+				} catch (error) {
+					results.push(
+						publicRun({
+							...initial,
+							state: "notRun",
+							recordingError: `Execution journal could not be read; this item was not dispatched: ${String(error)}`,
+						}),
+					);
+					stop = true;
+					continue;
+				}
 				if (stop || signal?.aborted) {
-					run = this.update(run, {
+					run = this.recordNonExecution(run, {
 						state: "notRun",
 						error: signal?.aborted
 							? "Batch cancelled before this item"
@@ -449,14 +462,26 @@ export class RhinoScriptExecution {
 					stop = true;
 					continue;
 				}
-				run = this.update(run, { state: "dispatching" });
+				try {
+					run = this.update(run, { state: "dispatching" });
+				} catch (error) {
+					results.push(
+						publicRun({
+							...run,
+							state: "notStarted",
+							recordingError: `Could not persist dispatch state; this item was not dispatched: ${String(error)}`,
+						}),
+					);
+					stop = true;
+					continue;
+				}
 				if (run.state !== "dispatching" || run.owner.claimId !== claimId) {
 					results.push(publicRun(run));
 					stop = true;
 					continue;
 				}
 				if (signal?.aborted) {
-					run = this.update(run, {
+					run = this.recordNonExecution(run, {
 						state: "notStarted",
 						error: "Cancelled before transport dispatch",
 					});
@@ -499,6 +524,20 @@ export class RhinoScriptExecution {
 			return { workspaceId, batchId, replayed: false, runs: results };
 		} finally {
 			activeRunnerClaims.delete(claimId);
+		}
+	}
+	private recordNonExecution(
+		run: RunRecord,
+		change: Partial<RunRecord>,
+	): RunRecord {
+		try {
+			return this.update(run, change);
+		} catch (error) {
+			return {
+				...run,
+				...change,
+				recordingError: `This item was not dispatched, but its journal could not be updated: ${String(error)}`,
+			};
 		}
 	}
 	private async replay(batchId: string, payloadHash: string) {

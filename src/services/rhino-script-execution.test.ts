@@ -294,4 +294,46 @@ describe("durable execution admission", () => {
 			]);
 		}
 	});
+	it("preserves known completion when disk exhaustion also prevents every skipped-item write", async () => {
+		const { w, backend, execution, item } = setup();
+		vi.mocked(backend.run).mockImplementationOnce(async () => {
+			vi.spyOn(w.store, "write").mockImplementation(() => {
+				throw new Error("ENOSPC: device full");
+			});
+			return ok;
+		});
+		const result = await execution.runBatch([item, item, item], "disk-full");
+		expect(backend.run).toHaveBeenCalledTimes(1);
+		expect(result.runs.map((run) => run.state)).toEqual([
+			"completed",
+			"notRun",
+			"notRun",
+		]);
+		expect(result.runs[0].output).toBe("done");
+		for (const run of result.runs)
+			expect(run.recordingError).toContain("ENOSPC");
+		expect(execution.getRun(result.runs[0].runId).state).toBe("dispatching");
+		expect(execution.getRun(result.runs[1].runId).state).toBe("prepared");
+	});
+	it("preserves earlier results when a later dispatch journal fails before source submission", async () => {
+		const { w, backend, execution, item } = setup();
+		const original = w.store.write.bind(w.store);
+		let dispatchCount = 0;
+		vi.spyOn(w.store, "write").mockImplementation((id, value) => {
+			if ((value as RunRecord).state === "dispatching" && ++dispatchCount === 2)
+				throw new Error("ENOSPC: dispatch state");
+			return original(id, value);
+		});
+		const result = await execution.runBatch(
+			[item, item, item],
+			"dispatch-full",
+		);
+		expect(result.runs.map((run) => run.state)).toEqual([
+			"completed",
+			"notStarted",
+			"notRun",
+		]);
+		expect(result.runs[1].recordingError).toContain("ENOSPC");
+		expect(backend.run).toHaveBeenCalledTimes(1);
+	});
 });
