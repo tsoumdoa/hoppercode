@@ -1,6 +1,6 @@
 # Editable Rhino script workspace plan
 
-Status: implementation plan only. No runtime changes made.
+Status: Node implementation complete on this branch. Asset execution requires the document-management branch's native identity/settings queries and precondition enforcement. Native platform checks are tracked below.
 
 Date: 2026-09-06. Base: `26d0a2c`, from `t3code/self-host-pi-rhino`.
 
@@ -174,3 +174,16 @@ No Rhino execution or source editing prototype was performed while writing this 
 ## Adversarial review disposition
 
 The 2026-09-06 subagent review found undefined execution replay identity and unsafe continuation of asset-backed batches after uncertain outcomes. The run identity/state machine, inspection/reconciliation actions, and stop policy above resolve those design gaps. Local review also found lifecycle-scoped storage, loss of RPC operation metadata in the current handler, ambiguous metadata revisions, and unrecoverable quota behavior. The revised plan specifies stable storage, a structured execution service, asset revision semantics, and reserved run-finalization capacity. These are plan corrections; implementation must still prove storage locking, native document preconditions, and failure recovery.
+
+
+## Implementation record, 2026-09-06
+
+Implemented persistent Python/C# assets, revision-checked original-source patches, bounded reads and diffs, metadata history, soft deletion, restore, replay-safe mutation identities, and workspace-scoped IDs. `rh_script` source actions work offline through extension-bound services. Embedded storage uses the stable data directory, with workspace/quota overrides; CLI binding uses the selected project and persistent session ID.
+
+Asset and mixed `rh_run_script` batches now persist their complete pinned item inventory before dispatch, then journal separate run records. Calls retain operation IDs, runner claims, states, settings and bounded output. Replays never dispatch source; unknown outcomes query only the original lifecycle. Terminal results supersede concurrent uncertainty. Mixed inline items also pin a document target. Abort signals are checked at transport send, and later batch items stop after failure, uncertainty or cancellation. Existing inline-only batches retain their continue-on-error behavior.
+
+The source store uses short exclusive writer transactions, file flush/atomic rename, and dead-process checks for stale locks. Completion capacity reserves 128,000 bytes per nonterminal run plus missing run-record source storage, then releases the reservation after a terminal record is durable. Source-quota exhaustion cannot prevent admitted run completion. Unreadable writer locks and interrupted recovery guards require manual inspection with writers stopped. They are never removed based on age.
+
+Verification completed on macOS with Node 26.8.1: 416 Vitest tests passed, production TypeScript/UI build passed, authenticated cross-language RPC smoke passed, and 201 Hopper.Core tests passed. New tests cover original-coordinate patches, Unicode/newlines, mutation replay after history advances, workspace restart under a new lifecycle, actual independent-process writer contention, offline tool registration/session rebinding, batch replay after deletion, pinned source, unknown outcomes, cancellation before transport send, quota finalization, structured native errors, and terminal-result races.
+
+Remaining native verification belongs to the combined implementation: Python/C# execution against the new shared document/settings DTOs, UI-thread document switch rejection and Undo, actual HopperCodeRestart, and Windows/macOS crash behavior around flush/rename. This branch adds no native registry and intentionally depends on `listRhinoDocuments` and native `runRhinoScript.expectedDocument` from document management. Native diagnostics remain raw when RhinoCode does not expose a reliable user-source location; no line number is guessed from library frames. The known shebang insertion behavior remains documented.

@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createRhScriptTool } from "./rh-script.js";
 import { rhRunScriptTool } from "./rh-run-script.js";
 import { rhQueryObjectsTool } from "./rh-query-objects.js";
 import { rhViewControlTool } from "./rh-view-control.js";
@@ -55,6 +56,11 @@ type PromptTool = ToolDefinition & {
  * `hopper_search_tools` (factory that needs ExtensionAPI).
  */
 export const HOPPER_REGISTERED_CATALOG: readonly HopperToolCatalogEntry[] = [
+    {
+        tool: createRhScriptTool(() => { throw new Error("Script workspace must be bound by the extension factory"); }),
+        group: "rhino",
+        keywords: ["saved script", "virtual edit", "patch", "revision", "rhino python", "rhino csharp", "history", "units", "tolerances"],
+    },
 	{
 		tool: rhRunScriptTool,
 		group: "rhino",

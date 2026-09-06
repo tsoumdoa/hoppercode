@@ -349,3 +349,24 @@ describe("HopperRpcClient", () => {
 		await client.close();
 	});
 });
+
+it("honors a tool abort immediately before transport send without claiming native cancellation", async () => {
+	const sockets = new FakeDealerFactory();
+	const client = new HopperRpcClient({
+		endpoint: "inproc://abort",
+		lifecycleInstanceId: LIFECYCLE_ID,
+		token: TOKEN,
+		socketFactory: sockets,
+	});
+	const signal = new AbortController();
+	const resultPromise = client.call(
+		"runRhinoScript",
+		{ mode: "python", source: "print(1)" },
+		{ operationId: "abort-run", signal: signal.signal },
+	);
+	signal.abort();
+	const result = await resultPromise;
+	expect(result.result.class).toBe("cancelled_before_start");
+	expect(sockets.sockets.flatMap((socket) => socket.sent)).toHaveLength(0);
+	await client.close();
+});
