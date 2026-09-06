@@ -462,7 +462,7 @@ export class RhinoScriptExecution {
 				try {
 					change = this.resultChange(
 						await backend.run(
-							{ mode: run.mode, source: run.source, echo: run.echo },
+							{ mode: run.mode, source: run.source, ...(run.echo === undefined ? {} : { echo: run.echo }) },
 							run.expectedDocument,
 							run.operationId,
 							signal,

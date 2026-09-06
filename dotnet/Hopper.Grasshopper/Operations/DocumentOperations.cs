@@ -87,12 +87,11 @@ internal sealed class GrasshopperDocumentOperations : DocumentService<GH_Documen
     protected override GH_Document Create(string? template)
     {
         if (template != null) {
-            var io = new GH_DocumentIO();
-            if (!io.Open(template) || io.Document == null) throw new DocumentOperationException("NATIVE_OPEN_FAILED", "Cannot load template.");
-            io.Document.FilePath = null;
-            io.Document.IsModified = true;
-            Instances.DocumentServer.AddDocument(io.Document);
-            return io.Document;
+            var loaded = ReadDocument(template);
+            loaded.FilePath = null;
+            loaded.IsModified = true;
+            Instances.DocumentServer.AddDocument(loaded);
+            return loaded;
         }
         var document = new GH_Document();
         Instances.DocumentServer.AddDocument(document);
@@ -100,11 +99,41 @@ internal sealed class GrasshopperDocumentOperations : DocumentService<GH_Documen
     }
     protected override GH_Document Open(string path)
     {
-        var io = new GH_DocumentIO();
-        if (!io.Open(path) || io.Document == null) throw new DocumentOperationException("NATIVE_OPEN_FAILED", "Grasshopper failed to deserialize the definition.");
-        var document = io.Document;
+        var document = ReadDocument(path);
         Instances.DocumentServer.AddDocument(document);
         return document;
+    }
+    private static GH_Document ReadDocument(string path)
+    {
+        // GH_DocumentIO.Open displays archive errors and offers to install missing
+        // plug-ins. Keep tool calls unattended and never register a partial load.
+        var archive = new GH_IO.Serialization.GH_Archive();
+        if (!archive.ReadFromFile(path) || archive.MessageCount(false, true, true) > 0)
+            throw new DocumentOperationException("NATIVE_OPEN_FAILED", "Cannot read the Grasshopper archive without errors or warnings.");
+        var objects = archive.GetRootNode.FindChunk("Definition")?.FindChunk("DefinitionObjects")
+            ?? throw new DocumentOperationException("NATIVE_OPEN_FAILED", "The archive has no definition objects.");
+        var objectCount = objects.GetInt32("ObjectCount");
+        for (var i = 0; i < objectCount; i++) {
+            var item = objects.FindChunk("Object", i)
+                ?? throw new DocumentOperationException("NATIVE_OPEN_FAILED", "The archive is missing a definition object.");
+            var id = item.GetGuid("GUID");
+            if (!Instances.ComponentServer.IsObjectCached(id))
+                throw new DocumentOperationException("MISSING_COMPONENTS", $"Definition requires an unavailable component: {item.GetString("Name")} ({id}). Install its plug-in before opening the definition.");
+        }
+        var document = new GH_Document();
+        var downloadMissing = CentralSettings.TryDownloadMissingPlugins;
+        try {
+            CentralSettings.TryDownloadMissingPlugins = false;
+            if (!archive.ExtractObject(document, "Definition") || archive.MessageCount(false, true, true) > 0 || document.Objects.Count != objectCount)
+                throw new DocumentOperationException("NATIVE_OPEN_FAILED", "Grasshopper could not completely deserialize the definition. Open it manually to inspect archive warnings or missing plug-ins.");
+            var missing = document.Objects.Where(obj => !Instances.ComponentServer.IsObjectCached(obj.ComponentGuid)).ToArray();
+            if (missing.Length > 0)
+                throw new DocumentOperationException("MISSING_COMPONENTS", "Definition requires unavailable components: " + string.Join(", ", missing.Select(obj => $"{obj.Name} ({obj.ComponentGuid})")));
+            document.DestroyProxySources();
+            document.FilePath = path;
+            return document;
+        } catch { document.Dispose(); throw; }
+        finally { CentralSettings.TryDownloadMissingPlugins = downloadMissing; }
     }
     protected override void Activate(GH_Document doc)
     {

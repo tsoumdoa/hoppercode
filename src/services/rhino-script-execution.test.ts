@@ -10,7 +10,7 @@ import {
 } from "./rhino-script-execution.js";
 import * as runtimeRpc from "../infra/runtime-rpc.js";
 import type { RunItem, RunRecord } from "../types/rhino-script-workspace.js";
-import type { OperationResultSnapshot } from "../protocol/v2.js";
+import { validateRpcRequest, type OperationResultSnapshot } from "../protocol/v2.js";
 const dirs: string[] = [];
 const target = {
 	documentId: "doc",
@@ -59,6 +59,19 @@ afterEach(() => {
 		rmSync(dir, { recursive: true, force: true });
 });
 describe("durable execution admission", () => {
+	it("sends a saved revision through the production backend as valid RPC JSON", async () => {
+		const { w, item } = setup();
+		const invoke = vi.fn(async (operation, args, options) => {
+			expect(validateRpcRequest({ protocolVersion: 2, lifecycleInstanceId: "host", requestId: "request",
+				token: "a".repeat(32), operation, operationId: options.operationId,
+				startDeadlineAt: Date.now() + 1000, args }).ok).toBe(true);
+			return { result: ok };
+		});
+		vi.spyOn(runtimeRpc, "getRuntimeRpc").mockReturnValue({ lifecycleInstanceId: "host", invoke } as unknown as ReturnType<typeof runtimeRpc.getRuntimeRpc>);
+		const result = await new RhinoScriptExecution(w).runBatch([item], "rpc-regression");
+		expect(invoke).toHaveBeenCalledOnce();
+		expect(result.runs[0].state).toBe("completed");
+	});
 	it("paginates every execution when run history exceeds revision history", async () => {
 		const { w, execution, item } = setup();
 		const expectedRunIds: string[] = [];
@@ -104,7 +117,7 @@ describe("durable execution admission", () => {
 			settings: { units: "millimeters" },
 		});
 		expect(backend.run).toHaveBeenCalledWith(
-			{ mode: "python", source: "print(1)", echo: undefined },
+			{ mode: "python", source: "print(1)" },
 			target,
 			result.runs[0].operationId,
 			undefined,

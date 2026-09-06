@@ -189,6 +189,7 @@ internal sealed class RhinoDocumentOperations : DocumentService<RhinoDoc>, IDisp
     private T Managed<T>(Func<T> action) { _managedDepth++; try { return action(); } finally { _managedDepth--; } }
     protected override RhinoDoc Create(string? template) => Managed(() => {
         if (OperatingSystem.IsMacOS()) return MacDocumentWindows.New(template);
+        if (template != null) ValidateNativeFile(template);
         var previous = Active; var dirty = previous?.Modified ?? false;
         if (ReplacesActive && previous != null) previous.Modified = false;
         try { var created = RhinoDoc.Create(template) ?? throw new DocumentOperationException("NATIVE_OPEN_FAILED", "Rhino did not create a document."); if (created.Views.GetStandardRhinoViews().Length == 0) created.Views.DefaultViewLayout(); return created; }
@@ -196,11 +197,20 @@ internal sealed class RhinoDocumentOperations : DocumentService<RhinoDoc>, IDisp
     });
     protected override RhinoDoc Open(string path) => Managed(() => {
         if (OperatingSystem.IsMacOS()) return MacDocumentWindows.Open(path);
+        ValidateNativeFile(path);
         var previous = Active; var dirty = previous?.Modified ?? false;
         if (ReplacesActive && previous != null) previous.Modified = false;
         try { return RhinoDoc.Open(path, out _) ?? throw new DocumentOperationException("NATIVE_OPEN_FAILED", "Rhino did not open the file."); }
         catch { if (previous != null && Documents.Contains(previous)) previous.Modified = dirty; throw; }
     });
+    private static void ValidateNativeFile(string path)
+    {
+        // The Windows File/Open API displays a modal error for invalid 3dm data.
+        // Parse without touching the live model before suppressing its dirty flag.
+        using var model = File3dm.Read(path);
+        if (model == null)
+            throw new DocumentOperationException("NATIVE_OPEN_FAILED", "The file is not a readable Rhino model.");
+    }
     protected override void Activate(RhinoDoc doc) => Managed(() => { if (OperatingSystem.IsMacOS()) MacDocumentWindows.Activate(doc); else RhinoDoc.ActiveDoc = doc; if (Active != doc) throw new DocumentOperationException("ACTIVATION_FAILED", "Rhino did not activate the requested document."); return true; });
     protected override bool Write(RhinoDoc doc, string path) => Managed(() => {
         using var options = new FileWriteOptions { UpdateDocumentPath = true, SuppressDialogBoxes = true, SuppressAllInput = true, WriteSelectedObjectsOnly = false, WriteUserData = true };

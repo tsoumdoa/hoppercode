@@ -44,3 +44,11 @@ Use `grasshopper_plugin.Tests.DocumentManagementNativeTests` for document checks
 The helper copies assemblies to a unique temporary directory and loads them in an isolated context. A one-shot Rhino Idle callback runs the tests after RhinoCode releases its own script context. A CLI acknowledgement alone is not a pass. The helper waits for the native result file and retains diagnostic artifacts. A timeout must not trigger an automatic retry because execution may still be running.
 
 No built plugin was installed by this verification workflow. Windows runtime behavior, actual `HopperCodeRestart`, host-crash durability on each platform, and the broader native cases listed in [document management implementation](document-management-implementation.md) remain release checks.
+
+## Windows loading regression fixes
+
+On Rhino 8.33.26188.13001 for Windows, `DocumentLoadingNativeTests` verifies that invalid `.3dm` files and unavailable Grasshopper components are rejected without modal dialogs for both open and template actions. Valid `.gh` and `.ghx` lifecycle round trips also pass. Invoke its methods `RejectInvalidRhinoFiles`, `RejectMissingGrasshopperComponents`, and `ValidGrasshopperRoundTrips` with the native runner. The runner now selects `RhinoCode.exe` on Windows; use `--rhino-code` to override its location. These native entry points require a running Rhino with Grasshopper loaded and an idle command line.
+
+The script-execution regression passes saved revisions through the production backend and validates the actual RPC envelope, ensuring omitted `echo` values remain omitted instead of becoming `undefined` JSON properties. This fix is platform-independent. The Grasshopper archive loader is shared by both platforms; macOS runtime revalidation is still required. The invalid-Rhino-file preflight applies to the Windows replacement path; the existing macOS document-window implementation is unchanged.
+
+Windows validation after these fixes: 17 script-execution tests and the three native entry points pass; TypeScript checking and both Windows production builds pass. Broader suites retain six unrelated Windows path-fixture failures (four host-config expectations and two fake-filesystem profile-scanner tests); these do not exercise the changed paths.

@@ -9,7 +9,7 @@ const usage = `Run selected parameterless test methods inside an explicitly sele
 Usage:
   node scripts/run-native-tests.mjs --rhino <instance-id> --assembly <test.dll>
     --type <full-type-name> --method <name> [--method <name> ...]
-    [--rhino-code <RhinoCode.dll>] [--timeout-ms <milliseconds>]
+    [--rhino-code <RhinoCode.dll-or-exe>] [--timeout-ms <milliseconds>]
 
 Build the test assembly first. Methods must create/dispose their own temporary
 documents and preserve user documents. This runner loads Hopper/test assemblies
@@ -41,7 +41,9 @@ for (const required of ["--rhino", "--assembly", "--type"]) {
 if (methods.length === 0) throw new Error("At least one --method is required.");
 const inputAssembly = resolve(values.get("--assembly"));
 const rhinoCode = values.get("--rhino-code")
-	?? "/Applications/Rhino 8.app/Contents/Frameworks/RhCore.framework/Versions/A/Resources/RhinoCode.dll";
+	?? (process.platform === "win32"
+		? join(process.env.ProgramFiles || "C:\\Program Files", "Rhino 8", "System", "RhinoCode.exe")
+		: "/Applications/Rhino 8.app/Contents/Frameworks/RhCore.framework/Versions/A/Resources/RhinoCode.dll");
 if (!isAbsolute(rhinoCode)) throw new Error("--rhino-code must be an absolute path.");
 const timeout = Number(values.get("--timeout-ms") ?? 120_000);
 if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 600_000) {
@@ -140,7 +142,8 @@ await writeFile(sourcePath, source);
 console.log(`Native test artifacts: ${runDir}`);
 const deadline = Date.now() + timeout;
 const outcome = await new Promise((accept, reject) => {
-	const child = spawn("dotnet", [rhinoCode, "--rhino", values.get("--rhino"), "script", sourcePath], {
+	const nativeExe = rhinoCode.toLowerCase().endsWith(".exe");
+	const child = spawn(nativeExe ? rhinoCode : "dotnet", [...(nativeExe ? [] : [rhinoCode]), "--rhino", values.get("--rhino"), "script", sourcePath], {
 		stdio: ["ignore", "inherit", "inherit"], timeout,
 	});
 	child.once("error", reject);
