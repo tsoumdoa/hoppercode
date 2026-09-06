@@ -31,6 +31,34 @@ public sealed class DocumentServiceTests : IDisposable
         Assert.Contains(response.GetProperty("effects").EnumerateArray(), e => e.GetProperty("stage").GetString() == "save" && e.GetProperty("completed").GetBoolean());
         Assert.True(response.GetProperty("outcomeUncertain").GetBoolean());
     }
+    [Theory]
+    [InlineData("missing.3dm", "PATH_NOT_FOUND")]
+    [InlineData("unsupported.txt", "UNSUPPORTED_EXTENSION")]
+    public void InvalidTemplateCannotSaveOrEndEditingBeforeNewFails(string templateName, string expectedCode)
+    {
+        var service = new FakeService();
+        var doc = service.Add(null, true);
+        var observed = service.Describe(doc);
+        var savePath = FilePath("must-not-save");
+        var response = Manage(service, new {
+            action = "new", expectedActiveDocument = observed.DocumentId,
+            templatePath = System.IO.Path.Combine(_directory, templateName),
+            affectedDocuments = new[] { new {
+                documentId = observed.DocumentId, expectedStateToken = observed.StateToken,
+                onUnsaved = "save", savePath,
+            } },
+        });
+
+        Assert.Equal(expectedCode, response.GetProperty("error").GetProperty("code").GetString());
+        Assert.Equal(0, service.Boundaries);
+        Assert.Equal(0, service.Writes);
+        Assert.Equal(0, service.Creates);
+        Assert.False(File.Exists(savePath));
+        Assert.Same(doc, service.Current);
+        Assert.True(doc.Dirty);
+        Assert.Equal(observed.StateToken, service.Describe(doc).StateToken);
+        Assert.Empty(response.GetProperty("effects").EnumerateArray());
+    }
     [Fact] public void SaveAsCannotOverwriteAnotherOpenDocument()
     {
         var service = new FakeService(); var target = service.Add(FilePath("target"), false); var source = service.Add(null, true); var observed = service.Describe(source);

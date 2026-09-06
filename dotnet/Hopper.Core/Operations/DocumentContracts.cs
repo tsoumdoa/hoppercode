@@ -22,6 +22,7 @@ public static class DocumentSession
     public static string LifecycleInstanceId { get; private set; } = Guid.NewGuid().ToString("N");
     private static readonly Dictionary<string, DocumentSegment> Segments = new();
     public static Action? ReconcileGrasshopper { get; set; }
+    public static Action? EnsureRhinoDocumentReady { get; set; }
     public static Func<string?, object?>? ReadRhinoSettings { get; set; }
     public static Func<string?>? ActiveRhinoDocumentId { get; set; }
     public static void Start(string lifecycleInstanceId) { LifecycleInstanceId = lifecycleInstanceId; Segments.Clear(); }

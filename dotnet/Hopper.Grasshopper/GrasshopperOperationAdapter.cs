@@ -131,11 +131,15 @@ namespace rhino_zmq_poc
                     RpcReasonCode.NO_ACTIVE_GRASSHOPPER_DOCUMENT,
                     "No active Grasshopper document is available.");
 
+            var mutationStarted = false;
             try
             {
+                if (MutationOperations.Contains(request.Operation)
+                    && request.Operation is not (RpcOperation.commitAgentTransaction or RpcOperation.cancelAgentTransaction))
+                    DocumentSession.EnsureRhinoDocumentReady?.Invoke();
                 AgentTransaction.Reconcile();
                 DocumentSession.ValidateSegment("grasshopper", request.Args);
-                if (MutationOperations.Contains(request.Operation)) AgentTransaction.BeforeMutation();
+                if (MutationOperations.Contains(request.Operation)) { AgentTransaction.BeforeMutation(); mutationStarted = true; }
                 if (QueryOperations.Contains(request.Operation))
                 {
                     if (!_queries.TryDispatch(
@@ -179,7 +183,7 @@ namespace rhino_zmq_poc
                     RpcReasonCode.OPERATION_FAILED,
                     $"{exception.GetType().Name}: {exception.Message}");
             }
-            finally { if (MutationOperations.Contains(request.Operation)) AgentTransaction.AfterMutation(); }
+            finally { if (mutationStarted) AgentTransaction.AfterMutation(); }
         }
 
         public void CleanupOpenTransactions()
