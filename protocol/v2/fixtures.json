@@ -91,6 +91,152 @@
         "startDeadlineAt": 1730000030000,
         "args": { "targetId": "component-1", "value": 12.5 }
       }
+    },
+    {
+      "name": "listRhinoDocuments",
+      "value": {
+        "protocolVersion": 2,
+        "lifecycleInstanceId": "life-01J7YQ5C5RP8D2VJ9F0A6M3N4B",
+        "requestId": "req-listRhinoDocuments",
+        "token": "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "operation": "listRhinoDocuments",
+        "startDeadlineAt": 1730000030000,
+        "args": {}
+      }
+    },
+    {
+      "name": "getRhinoDocument",
+      "value": {
+        "protocolVersion": 2,
+        "lifecycleInstanceId": "life-01J7YQ5C5RP8D2VJ9F0A6M3N4B",
+        "requestId": "req-getRhinoDocument",
+        "token": "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "operation": "getRhinoDocument",
+        "startDeadlineAt": 1730000030000,
+        "args": {
+          "documentId": "doc-fixture"
+        }
+      }
+    },
+    {
+      "name": "getRhinoDocumentSettings",
+      "value": {
+        "protocolVersion": 2,
+        "lifecycleInstanceId": "life-01J7YQ5C5RP8D2VJ9F0A6M3N4B",
+        "requestId": "req-getRhinoDocumentSettings",
+        "token": "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "operation": "getRhinoDocumentSettings",
+        "startDeadlineAt": 1730000030000,
+        "args": {
+          "documentId": "doc-fixture"
+        }
+      }
+    },
+    {
+      "name": "listGrasshopperDocuments",
+      "value": {
+        "protocolVersion": 2,
+        "lifecycleInstanceId": "life-01J7YQ5C5RP8D2VJ9F0A6M3N4B",
+        "requestId": "req-listGrasshopperDocuments",
+        "token": "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "operation": "listGrasshopperDocuments",
+        "startDeadlineAt": 1730000030000,
+        "args": {}
+      }
+    },
+    {
+      "name": "getGrasshopperDocument",
+      "value": {
+        "protocolVersion": 2,
+        "lifecycleInstanceId": "life-01J7YQ5C5RP8D2VJ9F0A6M3N4B",
+        "requestId": "req-getGrasshopperDocument",
+        "token": "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "operation": "getGrasshopperDocument",
+        "startDeadlineAt": 1730000030000,
+        "args": {
+          "documentId": "doc-fixture"
+        }
+      }
+    },
+    {
+      "name": "getGrasshopperDocumentSettings",
+      "value": {
+        "protocolVersion": 2,
+        "lifecycleInstanceId": "life-01J7YQ5C5RP8D2VJ9F0A6M3N4B",
+        "requestId": "req-getGrasshopperDocumentSettings",
+        "token": "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "operation": "getGrasshopperDocumentSettings",
+        "startDeadlineAt": 1730000030000,
+        "args": {
+          "documentId": "doc-fixture"
+        }
+      }
+    },
+    {
+      "name": "browseDocumentFiles",
+      "value": {
+        "protocolVersion": 2,
+        "lifecycleInstanceId": "life-01J7YQ5C5RP8D2VJ9F0A6M3N4B",
+        "requestId": "req-browseDocumentFiles",
+        "token": "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "operation": "browseDocumentFiles",
+        "startDeadlineAt": 1730000030000,
+        "args": {
+          "kind": "rhino",
+          "path": "/models",
+          "limit": 50
+        }
+      }
+    },
+    {
+      "name": "getDocumentTransactionState",
+      "value": {
+        "protocolVersion": 2,
+        "lifecycleInstanceId": "life-01J7YQ5C5RP8D2VJ9F0A6M3N4B",
+        "requestId": "req-getDocumentTransactionState",
+        "token": "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "operation": "getDocumentTransactionState",
+        "startDeadlineAt": 1730000030000,
+        "args": {
+          "owner": "rhino"
+        }
+      }
+    },
+    {
+      "name": "manageRhinoDocument",
+      "value": {
+        "protocolVersion": 2,
+        "lifecycleInstanceId": "life-01J7YQ5C5RP8D2VJ9F0A6M3N4B",
+        "requestId": "req-manageRhinoDocument",
+        "token": "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "operation": "manageRhinoDocument",
+        "startDeadlineAt": 1730000030000,
+        "args": {
+          "action": "open",
+          "path": "/models/test.3dm",
+          "expectedActiveDocument": null,
+          "affectedDocuments": []
+        },
+        "operationId": "op-manageRhinoDocument"
+      }
+    },
+    {
+      "name": "manageGrasshopperDocument",
+      "value": {
+        "protocolVersion": 2,
+        "lifecycleInstanceId": "life-01J7YQ5C5RP8D2VJ9F0A6M3N4B",
+        "requestId": "req-manageGrasshopperDocument",
+        "token": "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "operation": "manageGrasshopperDocument",
+        "startDeadlineAt": 1730000030000,
+        "args": {
+          "action": "open",
+          "path": "/models/test.gh",
+          "expectedActiveDocument": null,
+          "affectedDocuments": []
+        },
+        "operationId": "op-manageGrasshopperDocument"
+      }
     }
   ],
   "invalidRequests": [

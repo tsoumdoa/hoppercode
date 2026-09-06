@@ -1,3 +1,5 @@
+import { rhDocumentTool } from "./rh-document.js";
+import { ghDocumentTool } from "./gh-document.js";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { rhRunScriptTool } from "./rh-run-script.js";
 import { rhQueryObjectsTool } from "./rh-query-objects.js";
@@ -55,6 +57,8 @@ type PromptTool = ToolDefinition & {
  * `hopper_search_tools` (factory that needs ExtensionAPI).
  */
 export const HOPPER_REGISTERED_CATALOG: readonly HopperToolCatalogEntry[] = [
+	{ tool: rhDocumentTool, group: "rhino", keywords: ["file", "open", "close", "save", "save as", "units", "tolerance", "3dm", "document settings"], requires: "backend" },
+	{ tool: ghDocumentTool, group: "gh-read", keywords: ["file", "open", "close", "save", "save as", "units", "tolerance", "ghx", "document settings"], requires: "backend" },
 	{
 		tool: rhRunScriptTool,
 		group: "rhino",

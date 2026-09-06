@@ -23,6 +23,14 @@
   },
   "operationClassification": {
     "query": [
+      "listRhinoDocuments",
+      "getRhinoDocument",
+      "getRhinoDocumentSettings",
+      "listGrasshopperDocuments",
+      "getGrasshopperDocument",
+      "getGrasshopperDocumentSettings",
+      "browseDocumentFiles",
+      "getDocumentTransactionState",
       "getRuntimeStatus",
       "getOperationResult",
       "listAllComponents",
@@ -40,6 +48,8 @@
       "cancelOperation"
     ],
     "mutation": [
+      "manageRhinoDocument",
+      "manageGrasshopperDocument",
       "applyGraph",
       "runRhinoScript",
       "controlRhinoView",

@@ -1,3 +1,4 @@
+import { formatDocumentSettings } from "../services/document-management.js";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { createQueryExecute } from "./execute-factory.js";
@@ -51,7 +52,10 @@ export const ghGetCanvasTool = defineTool({
 				fetchCurrentCanvas(req, { selectionOnly: params.selectionOnly === true }),
 			);
 			const hasFilters = !!params.subgraph || params.selectionOnly === true;
-			return formatCanvasResponse(response, hasFilters ? params : undefined);
+			const result = formatCanvasResponse(response, hasFilters ? params : undefined);
+			const settings = formatDocumentSettings(response.settings);
+			if (settings) result.content.unshift({ type: "text", text: settings });
+			return result;
 		},
 	),
 });

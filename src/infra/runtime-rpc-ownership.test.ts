@@ -22,6 +22,8 @@ const lifecycleInstanceId = "life-ownership-test";
 
 const expectedOperations = {
 	core: [
+		"browseDocumentFiles",
+		"getDocumentTransactionState",
 		"getRuntimeStatus",
 		"getOperationResult",
 		"lifecycleHandshake",
@@ -29,6 +31,7 @@ const expectedOperations = {
 		"cancelOperation",
 	],
 	rhino: [
+		"listRhinoDocuments", "getRhinoDocument", "getRhinoDocumentSettings", "manageRhinoDocument",
 		"queryRhinoObjects",
 		"captureRhinoView",
 		"runRhinoScript",
@@ -38,6 +41,7 @@ const expectedOperations = {
 		"cancelRhinoAgentTransaction",
 	],
 	grasshopper: [
+		"listGrasshopperDocuments", "getGrasshopperDocument", "getGrasshopperDocumentSettings", "manageGrasshopperDocument",
 		"listAllComponents",
 		"getCurrentCanvas",
 		"getCanvasErrors",
@@ -124,8 +128,9 @@ describe("RPC operation ownership", () => {
 
 			await runtime.invoke(operation, argsFor(operation) as never);
 
-			expect(requiresGrasshopper(operation)).toBe(owner === "grasshopper");
-			expect(events.subscribeCount).toBe(owner === "grasshopper" ? 1 : 0);
+			const needsReadiness = owner === "grasshopper" && !["listGrasshopperDocuments", "getGrasshopperDocument", "getGrasshopperDocumentSettings"].includes(operation);
+			expect(requiresGrasshopper(operation)).toBe(needsReadiness);
+			expect(events.subscribeCount).toBe(needsReadiness ? 1 : 0);
 		},
 	);
 });

@@ -46,6 +46,7 @@ export class GrasshopperReadinessCoordinator {
 	private readonly clock: ReadinessClock;
 	private readonly timeoutMs: number;
 	private inFlight: Promise<RuntimeStatus> | null = null;
+	private activeInFlight: Promise<RuntimeStatus> | null = null;
 	private wakeups: WakeupGate | null = null;
 	private closed = false;
 
@@ -59,15 +60,27 @@ export class GrasshopperReadinessCoordinator {
 		this.timeoutMs = options.timeoutMs ?? 60_000;
 	}
 
-	ensureReady(): Promise<RuntimeStatus> {
+	ensureReady(requireActiveDocument = true): Promise<RuntimeStatus> {
 		if (this.closed) return Promise.reject(new Error("Grasshopper readiness is closed."));
-		if (this.inFlight) return this.inFlight;
-		const pending = this.run();
-		this.inFlight = pending;
-		void pending.finally(() => {
-			if (this.inFlight === pending) this.inFlight = null;
-		}).catch(() => { });
-		return pending;
+		if (!this.inFlight) {
+			const pending = this.run();
+			this.inFlight = pending;
+			void pending.finally(() => {
+				if (this.inFlight === pending) this.inFlight = null;
+			}).catch(() => {});
+		}
+		if (!requireActiveDocument) return this.inFlight;
+		if (!this.activeInFlight) {
+			const pending = this.inFlight.then((status) => {
+				if (!status.grasshopper.activeDocument) throw new GrasshopperReadinessError("NO_ACTIVE_GRASSHOPPER_DOCUMENT", status, "Grasshopper is ready but has no active document.");
+				return status;
+			});
+			this.activeInFlight = pending;
+			void pending.finally(() => {
+				if (this.activeInFlight === pending) this.activeInFlight = null;
+			}).catch(() => {});
+		}
+		return this.activeInFlight;
 	}
 
 	close(): void {
@@ -106,13 +119,6 @@ export class GrasshopperReadinessCoordinator {
 				if (status) {
 					this.assertLifecycle(status);
 					if (status.grasshopper.state === "ready") {
-						if (!status.grasshopper.activeDocument) {
-							throw new GrasshopperReadinessError(
-								"NO_ACTIVE_GRASSHOPPER_DOCUMENT",
-								status,
-								"Grasshopper is ready but has no active document.",
-							);
-						}
 						return status;
 					}
 
@@ -140,13 +146,6 @@ export class GrasshopperReadinessCoordinator {
 					if (finalRead.status) {
 						this.assertLifecycle(finalRead.status);
 						if (finalRead.status.grasshopper.state === "ready") {
-							if (!finalRead.status.grasshopper.activeDocument) {
-								throw new GrasshopperReadinessError(
-									"NO_ACTIVE_GRASSHOPPER_DOCUMENT",
-									finalRead.status,
-									"Grasshopper is ready but has no active document.",
-								);
-							}
 							return finalRead.status;
 						}
 						this.throwIfTerminalState(finalRead.status);

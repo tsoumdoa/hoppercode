@@ -9,6 +9,7 @@ description: Rhino document and viewport workflow for geometry, layers, selectio
 
 | Outcome | Tool |
 |---------|------|
+| Open, create, activate, save, save as, close, or inspect units/tolerances | `rh_document` for .3dm; `gh_document` for .gh/.ghx |
 | Change Rhino geometry, layers, selection, blocks, materials, or directly commit current geometry | `rh_run_script` |
 | Change viewport, projection, camera, CPlane view, or zoom | `rh_view_control` |
 | Inspect pixels for visual QA | `rh_capture_view` when available |
@@ -55,3 +56,15 @@ Before internalizing more than 10 objects or a whole layer, confirm reference vs
 - Use `gh_edit_script` to run against `RhinoDoc`; it edits code inside a GH script component.
 - Use `gh_edit_components` to draw raw Rhino geometry.
 - Use `rh_run_script` for ordinary viewport/camera changes when `rh_view_control` supports them.
+
+## Files, units, and tolerances
+
+Use `rh_document` and `gh_document` for native document lifecycle work. Start with `list`; target the returned live document handle, never its display name. `browse` lists directories and supported CAD files. Consult returned capabilities before a native action, including unsupported platform actions.
+
+Before dimensional modeling, inspect `getSettings` for the exact document. Convert physical dimensions to model units. A 2-meter length in a millimeter document needs coordinates spanning 2000 model units; counts and dimensionless ratios need no conversion. Preserve model/layout distinctions and degrees/radians labels. Display precision is formatting, not calculation tolerance. Unitless or unknown custom scales require clarification only when physical scale affects the result. Never loosen tolerance to hide a failed operation.
+
+For GH, read its effective Rhino settings source and context mismatch. Association and active Rhino document can differ; explicit component settings still take precedence. Refresh settings after a document switch or settings change.
+
+Use fresh state tokens for save/saveAs/close. new/open require the observed active handle or explicit null and an affectedDocuments list with every replaced document's fresh token and unsaved policy. Use [] when nothing is replaced. close requires onUnsaved. Discard changes only with user authorization already present in the conversation. Saving an unnamed file needs an absolute destination. File transitions finish the editing segment and are outside geometry Undo.
+
+After a failure, inspect stages and side effects before continuing. A pre-save may have succeeded even if closing failed. An uncertain outcome must be reconciled; do not replay open/save/close blindly.

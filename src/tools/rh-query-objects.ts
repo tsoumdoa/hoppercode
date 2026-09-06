@@ -1,3 +1,4 @@
+import { formatDocumentSettings } from "../services/document-management.js";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { withRequester } from "../infra/request-helpers.js";
@@ -80,10 +81,11 @@ export const rhQueryObjectsTool = defineTool({
 			};
 		}
 
+		const settings = formatDocumentSettings("settings" in res ? res.settings : undefined);
 		const objects = "objects" in res ? res.objects : [];
 		if (objects.length === 0) {
 			return {
-				content: [{ type: "text", text: "No Rhino objects matched the query." }],
+				content: [{ type: "text", text: settings + "No Rhino objects matched the query." }],
 				details: {},
 			};
 		}
@@ -99,7 +101,7 @@ export const rhQueryObjectsTool = defineTool({
 					{
 						type: "text",
 						text:
-							`${objects.length} Rhino object(s) matched${filterNote}. ` +
+							settings + `${objects.length} Rhino object(s) matched${filterNote}. ` +
 							"Use gh_param_rhino with rhinoQuery to reference/internalize in bulk without listing IDs.",
 					},
 				],
@@ -126,7 +128,7 @@ export const rhQueryObjectsTool = defineTool({
 			content: [
 				{
 					type: "text",
-					text: `${header}\n${lines.join("\n")}${footer}`,
+					text: settings + `${header}\n${lines.join("\n")}${footer}`,
 				},
 			],
 			details: {},
