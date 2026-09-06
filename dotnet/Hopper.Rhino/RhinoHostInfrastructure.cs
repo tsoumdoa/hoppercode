@@ -230,6 +230,7 @@ namespace rhino_zmq_poc
                     start.Error ?? $"Transport startup returned {start.State}."));
             }
 
+            Hopper.Core.Operations.DocumentSession.Start(lifecycleInstanceId);
             _status.UpdateTransport(true, lifecycleInstanceId);
             return Task.FromResult(new TransportStartResult(
                 true,

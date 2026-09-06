@@ -20,10 +20,66 @@ import {
 	type RuntimeRpcTransport,
 } from "./runtime-rpc.js";
 import { Requester } from "./requester.js";
+import { clearDocumentGuidAliases, resolveInstanceGuid, resolveRhinoGuid, toShortInstanceGuid, toShortRhinoGuid } from "../services/guid-shortener.js";
 
 const LIFE = "life-runtime-1";
 
 describe("RuntimeRpc", () => {
+	it.each(["rhino", "grasshopper"] as const)("retains %s aliases across editing segments and clears them for another document", async (owner) => {
+		clearDocumentGuidAliases(owner);
+		const shorten = owner === "rhino" ? toShortRhinoGuid : toShortInstanceGuid;
+		const resolve = owner === "rhino" ? resolveRhinoGuid : resolveInstanceGuid;
+		const begin = owner === "rhino" ? "beginRhinoAgentTransaction" : "beginAgentTransaction";
+		const commit = owner === "rhino" ? "commitRhinoAgentTransaction" : "commitAgentTransaction";
+		let activeDocument = "doc-a";
+		let segment = { documentId: null as string | null, segmentId: null as string | null, epoch: 0, state: "idle", lifecycleInstanceId: LIFE };
+		const transport = new FakeTransport((operation) => {
+			if (operation === "getRuntimeStatus") return response(operation, status("ready", true, 1));
+			if (operation === begin) segment = { documentId: activeDocument, segmentId: `segment-${segment.epoch + 1}`, epoch: segment.epoch + 1, state: "active", lifecycleInstanceId: LIFE };
+			if (operation === commit) segment = { documentId: null, segmentId: null, epoch: segment.epoch + 1, state: "idle", lifecycleInstanceId: LIFE };
+			return response(operation, operation === "getDocumentTransactionState" ? segment : { transaction: segment });
+		});
+		const runtime = runtimeWith(transport, new FakeEvents());
+		const full = "11111111-2222-3333-4444-555555555555";
+		const alias = shorten(full);
+		await runtime.invoke(begin, {});
+		expect(resolve(alias)).toBe(full);
+		await runtime.invoke(commit, {});
+		expect(resolve(alias)).toBe(full);
+		await runtime.invoke(begin, {});
+		expect(resolve(alias)).toBe(full);
+		await runtime.invoke(commit, {});
+		activeDocument = "doc-b";
+		await runtime.invoke(begin, {});
+		expect(resolve(alias)).toBe(alias);
+		await runtime.close();
+		clearDocumentGuidAliases(owner);
+	});
+
+	it.each(["rhino", "grasshopper"] as const)("invalidates %s aliases when inventory observes an active document change", async (owner) => {
+		clearDocumentGuidAliases(owner);
+		const shorten = owner === "rhino" ? toShortRhinoGuid : toShortInstanceGuid;
+		const resolve = owner === "rhino" ? resolveRhinoGuid : resolveInstanceGuid;
+		const list = owner === "rhino" ? "listRhinoDocuments" : "listGrasshopperDocuments";
+		let activeDocumentId: string | null = "doc-a";
+		const transport = new FakeTransport((operation) => response(operation, { activeDocumentId }));
+		const runtime = runtimeWith(transport, new FakeEvents());
+		await runtime.invoke(list, {});
+		const full = "11111111-2222-3333-4444-555555555555";
+		const alias = shorten(full);
+		await runtime.invoke(list, {});
+		expect(resolve(alias)).toBe(full);
+		activeDocumentId = "doc-b";
+		await runtime.invoke(list, {});
+		expect(resolve(alias)).toBe(alias);
+		shorten(full);
+		activeDocumentId = null;
+		await runtime.invoke(list, {});
+		expect(resolve(alias)).toBe(alias);
+		await runtime.close();
+		clearDocumentGuidAliases(owner);
+	});
+
 	it("tracks an empty turn without resolving a connection profile", async () => {
 		await resetRuntimeRpcForTests();
 
@@ -259,6 +315,65 @@ describe("RuntimeRpc", () => {
 		expect(operations.filter((operation) => operation === "beginAgentTransaction")).toHaveLength(1);
 		expect(operations.filter((operation) => operation === "commitAgentTransaction")).toHaveLength(1);
 		expect(operations.indexOf("beginAgentTransaction")).toBeLessThan(operations.indexOf("setSliderValue"));
+	});
+
+	it("opens a GH document without an active canvas and never begins geometry Undo for a boundary", async () => {
+		const transport = new FakeTransport((operation) => response(operation, operation === "getRuntimeStatus" ? status("ready", false, 1) : {}));
+		const runtime = runtimeWith(transport, new FakeEvents());
+		runtime.beginAgentTurn();
+		await runtime.invoke("listGrasshopperDocuments", {});
+		await runtime.invoke("manageGrasshopperDocument", { action: "open", path: "/a.gh", expectedActiveDocument: null, affectedDocuments: [] });
+		expect(transport.calls.some((call) => call.operation === "beginAgentTransaction")).toBe(false);
+		expect(transport.calls.filter((call) => call.operation === "manageGrasshopperDocument")).toHaveLength(1);
+	});
+
+	it("abandons stale local transaction ownership after a native document switch", async () => {
+		let segment = { documentId: "doc-a", segmentId: "segment-a", epoch: 1, state: "active", lifecycleInstanceId: LIFE };
+		const transport = new FakeTransport((operation) => response(operation,
+			operation === "getDocumentTransactionState" ? segment : { transaction: segment }));
+		const runtime = runtimeWith(transport, new FakeEvents());
+		runtime.beginAgentTurn();
+		await runtime.invoke("runRhinoScript", { mode: "python", source: "pass" });
+		expect(transport.calls.find((call) => call.operation === "runRhinoScript")?.args).toMatchObject({ expectedSegment: { documentId: "doc-a", segmentId: "segment-a" } });
+		segment = { ...segment, documentId: "doc-b", segmentId: "", state: "abandoned", epoch: 2 };
+		await runtime.cancelAgentTurn();
+		expect(transport.calls.some((call) => call.operation === "cancelRhinoAgentTransaction")).toBe(false);
+	});
+
+	it("blocks dependent edits and cancellation until an uncertain transition has a terminal result", async () => {
+		let terminal = false;
+		const segment = { documentId: "doc-b", segmentId: null, epoch: 2, state: "idle", lifecycleInstanceId: LIFE };
+		const transport = new FakeTransport((operation) => {
+			if (operation === "manageRhinoDocument") return {
+				source: "node", protocolVersion: 2, lifecycleInstanceId: LIFE, requestId: "req-save", operation, operationId: "save-1",
+				result: { class: "outcome_unknown", reasonCode: "COMPLETION_TIMEOUT", message: "Reply lost" },
+			} as NodeLocalOutcomeUnknown;
+			return response(operation, operation === "getOperationResult" ? { state: terminal ? "terminal" : "pending" }
+				: operation === "getDocumentTransactionState" ? segment : {});
+		});
+		const runtime = runtimeWith(transport, new FakeEvents());
+		runtime.beginAgentTurn();
+		await expect(runtime.invoke("manageRhinoDocument", { action: "save", documentId: "doc-a", expectedStateToken: "v1" })).rejects.toBeInstanceOf(RpcOutcomeUnknownError);
+		await expect(runtime.invoke("runRhinoScript", { mode: "python", source: "pass" })).rejects.toThrow("uncertain");
+		await expect(runtime.cancelAgentTurn()).rejects.toThrow("uncertain");
+		expect(transport.calls.some((call) => call.operation === "runRhinoScript" || call.operation === "cancelRhinoAgentTransaction")).toBe(false);
+		terminal = true;
+		await runtime.invoke("runRhinoScript", { mode: "python", source: "pass" });
+		expect(transport.calls.filter((call) => call.operation === "manageRhinoDocument")).toHaveLength(1);
+	});
+
+	it("closes transport even when an uncertain mutation blocks cancellation", async () => {
+		const transport = new FakeTransport((operation) => operation === "manageRhinoDocument" ? {
+			source: "node", protocolVersion: 2, lifecycleInstanceId: LIFE, requestId: "req-save", operation, operationId: "save-1",
+			result: { class: "outcome_unknown", reasonCode: "COMPLETION_TIMEOUT", message: "Reply lost" },
+		} as NodeLocalOutcomeUnknown : response(operation, operation === "getOperationResult" ? { state: "pending" } : {}));
+		const closed = vi.spyOn(transport, "close");
+		const runtime = runtimeWith(transport, new FakeEvents());
+		await expect(runtime.invoke("manageRhinoDocument", { action: "save", documentId: "doc-a", expectedStateToken: "v1" })).rejects.toBeInstanceOf(RpcOutcomeUnknownError);
+		await expect(runtime.close()).rejects.toThrow("uncertain");
+		expect(closed).toHaveBeenCalledOnce();
+		expect(transport.calls.filter((call) => call.operation === "manageRhinoDocument")).toHaveLength(1);
+		expect(transport.calls.some((call) => call.operation === "cancelRhinoAgentTransaction")).toBe(false);
 	});
 
 	it("does not start Grasshopper when an unused turn is cancelled or closed", async () => {

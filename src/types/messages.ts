@@ -1,3 +1,4 @@
+import type { DocumentSettings } from "./document-management.js";
 export type GhComponentInfo = {
 	name: string;
 	typeGuid: string;
@@ -15,6 +16,8 @@ export type ListAllComponentsResponse = {
 };
 
 export type GetCurrentCanvasResponse = {
+	documentId?: string;
+	settings?: DocumentSettings | null;
 	type: "getCurrentCanvas.response";
 	timestamp: number;
 	docName: string;
@@ -74,6 +77,8 @@ export type RhinoObjectInfo = {
 };
 
 export type QueryRhinoObjectsResponse = {
+	documentId?: string;
+	settings?: DocumentSettings | null;
 	type: "queryRhinoObjects.response";
 	timestamp: number;
 	objects: RhinoObjectInfo[];

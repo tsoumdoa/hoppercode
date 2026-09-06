@@ -34,6 +34,7 @@ describe("host config", () => {
 			authPath: "/Users/test/.pi/agent/auth.json",
 			sessionsDir: "/work/private/instances/rhino-42-backend/sessions",
 			workspaceDir: "/work/private/instances/rhino-42-backend/workspace",
+            scriptWorkspaceDir: "/work/private/workspaces/default",
 			staticDir: "/app/host/static",
 		});
 		expect(config.connectionProfile).toBe("/work/rhino.json");

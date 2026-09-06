@@ -9,6 +9,8 @@ export type HostPaths = {
 	authPath: string;
 	sessionsDir: string;
 	workspaceDir: string;
+	scriptWorkspaceDir?: string;
+	scriptWorkspaceQuotaBytes?: number;
 	staticDir: string;
 };
 
@@ -89,6 +91,19 @@ export function resolveHostConfig(
 	const env = options.env ?? process.env;
 	const dataDirArg = readOption(args, "--data-dir");
 	const authPathArg = readOption(args, "--auth-path");
+	const scriptWorkspaceArg =
+		readOption(args, "--script-workspace") ?? env.HOPPER_SCRIPT_WORKSPACE;
+	if (scriptWorkspaceArg && !isAbsolute(scriptWorkspaceArg))
+		throw new Error(
+			"--script-workspace / HOPPER_SCRIPT_WORKSPACE must be absolute",
+		);
+	const scriptWorkspaceQuotaBytes = parseInteger(
+		readOption(args, "--script-workspace-quota-bytes") ??
+			env.HOPPER_SCRIPT_WORKSPACE_QUOTA_BYTES,
+		"script workspace quota",
+	);
+	if (scriptWorkspaceQuotaBytes !== undefined && scriptWorkspaceQuotaBytes < 1)
+		throw new Error("Script workspace quota must be positive");
 	const staticDirArg = readOption(args, "--static-dir");
 	const profileArg = readOption(args, "--connection-profile");
 	const uiDevOriginArg = readOption(args, "--ui-dev-origin") ?? env.HOPPER_UI_DEV_ORIGIN;
@@ -136,6 +151,11 @@ export function resolveHostConfig(
 			authPath,
 			sessionsDir: join(instanceDir, "sessions"),
 			workspaceDir: join(instanceDir, "workspace"),
+			scriptWorkspaceDir:
+				scriptWorkspaceArg ?? join(dataDir, "workspaces", "default"),
+			...(scriptWorkspaceQuotaBytes === undefined
+				? {}
+				: { scriptWorkspaceQuotaBytes }),
 			staticDir: staticDirArg ? absolute(staticDirArg) : resolve(moduleDir, "static"),
 		},
 	};

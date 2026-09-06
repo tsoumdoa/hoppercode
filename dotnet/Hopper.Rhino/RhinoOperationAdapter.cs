@@ -19,7 +19,7 @@ public sealed record RhinoObjectQueryArguments(
 public sealed record RhinoScriptArguments(
     string? Mode,
     string? Source,
-    bool Echo);
+    bool Echo, ExpectedDocument? ExpectedDocument = null);
 
 public sealed record RhinoObjectResult(
     string ObjectId,
@@ -36,6 +36,12 @@ public sealed record RhinoScriptExecution(
     bool Succeeded,
     string Output,
     string Error);
+
+public interface IRhinoDocumentExecutor
+{
+    OperationResultV2 DocumentOperation(RpcOperation operation, JsonElement args);
+    object? CurrentSettings { get; }
+}
 
 public interface IRhinoOperationExecutor
 {
@@ -70,13 +76,20 @@ public sealed class RhinoOperationAdapter : IRhinoOperationAdapter, IAgentTransa
             or RpcOperation.controlRhinoView
             or RpcOperation.beginRhinoAgentTransaction
             or RpcOperation.commitRhinoAgentTransaction
-            or RpcOperation.cancelRhinoAgentTransaction;
+            or RpcOperation.cancelRhinoAgentTransaction
+            or RpcOperation.listRhinoDocuments
+            or RpcOperation.getRhinoDocument
+            or RpcOperation.getRhinoDocumentSettings
+            or RpcOperation.manageRhinoDocument;
 
     public OperationResultV2 Execute(RpcRequestV2 request)
     {
         ArgumentNullException.ThrowIfNull(request);
         try
         {
+            if (_executor is IRhinoDocumentExecutor documents && request.Operation is RpcOperation.listRhinoDocuments or RpcOperation.getRhinoDocument or RpcOperation.getRhinoDocumentSettings or RpcOperation.manageRhinoDocument)
+                return documents.DocumentOperation(request.Operation, request.Args);
+            DocumentSession.ValidateSegment("rhino", request.Args);
             return request.Operation switch
             {
                 RpcOperation.queryRhinoObjects => QueryObjects(request.Args),
@@ -91,7 +104,7 @@ public sealed class RhinoOperationAdapter : IRhinoOperationAdapter, IAgentTransa
         }
         catch (Exception exception)
         {
-            return Failure($"Invalid {request.Operation} request: {exception.Message}");
+            return Failure(exception is DocumentOperationException domain ? $"{domain.Code}: {domain.Message}" : $"Invalid {request.Operation} request: {exception.Message}");
         }
     }
 
@@ -105,6 +118,7 @@ public sealed class RhinoOperationAdapter : IRhinoOperationAdapter, IAgentTransa
             type = "queryRhinoObjects.response",
             timestamp = _clock.UtcNow.ToUnixTimeMilliseconds(),
             objects = execution.Objects,
+            settings = (_executor as IRhinoDocumentExecutor)?.CurrentSettings,
         };
         return execution.Succeeded
             ? Completed(data)
@@ -115,6 +129,7 @@ public sealed class RhinoOperationAdapter : IRhinoOperationAdapter, IAgentTransa
     {
         var arguments = args.Deserialize<RhinoScriptArguments>(RpcV2Contract.JsonOptions)
             ?? throw new InvalidOperationException("Script arguments are required.");
+        var settings = (_executor as IRhinoDocumentExecutor)?.CurrentSettings;
         var execution = _executor.RunScript(arguments);
         var data = new
         {
@@ -123,6 +138,8 @@ public sealed class RhinoOperationAdapter : IRhinoOperationAdapter, IAgentTransa
             ok = execution.Succeeded,
             output = execution.Output,
             error = execution.Error,
+            settings,
+            transaction = DocumentSession.Segment("rhino"),
         };
         return execution.Succeeded
             ? Completed(data)
@@ -180,7 +197,7 @@ public sealed class RhinoOperationAdapter : IRhinoOperationAdapter, IAgentTransa
 
     private static OperationResultV2 Transaction(RhinoTransactionExecution execution)
     {
-        var data = new { result = execution.Result };
+        var data = new { result = execution.Result, transaction = DocumentSession.Segment("rhino") };
         return execution.Succeeded
             ? Completed(data)
             : Failure(execution.Error ?? execution.Result, data);

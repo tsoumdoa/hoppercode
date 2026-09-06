@@ -86,6 +86,8 @@ export type NodeLocalOutcomeUnknown = {
 export type RpcCallResult = RpcOperationResponse | NodeLocalOutcomeUnknown;
 
 export type RpcCallOptions = {
+	/** Checked before transport send; never claims to interrupt native execution. */
+	signal?: AbortSignal;
 	startDeadlineMs?: number;
 	completionTimeoutMs?: number;
 	operationId?: string;
@@ -257,6 +259,18 @@ export class HopperRpcClient {
 			socket = await this.ensureConnected();
 			const pending = this.pending.get(requestId);
 			if (!pending) return result;
+			if (options.signal?.aborted) {
+				this.resolvePending(pending, {
+					protocolVersion: PROTOCOL_VERSION, lifecycleInstanceId: this.lifecycleInstanceId,
+					requestId, operation,
+					...(operationClass === "mutation" ? { operationId: (request as { operationId: string }).operationId } : {}),
+					result: {
+						class: "cancelled_before_start", reasonCode: "CANCELLED_BEFORE_START",
+						message: "Tool call cancelled before transport dispatch",
+					},
+				});
+				return result;
+			}
 			// Once send begins, delivery is ambiguous if the socket disconnects. Mark it
 			// before awaiting ZeroMQ so a receive-side failure cannot race this flag.
 			pending.sent = true;

@@ -1,3 +1,5 @@
+import { clearDocumentGuidAliases } from "../services/guid-shortener.js";
+import type { DocumentTransactionState } from "../types/document-management.js";
 import {
 	type RpcCallOptions,
 	type RpcCallResult,
@@ -101,6 +103,10 @@ export class RuntimeRpc {
 	private turnAcceptingMutations = false;
 	private turnId = 0;
 	private readonly transactionOpen = { rhino: false, grasshopper: false };
+	private readonly segments: Partial<Record<TransactionOwner, DocumentTransactionState>> = {};
+	private readonly aliasDocuments: Partial<Record<TransactionOwner, string>> = {};
+	private readonly mutationQueue: Partial<Record<TransactionOwner, Promise<unknown>>> = {};
+	private readonly uncertainTransitions: Partial<Record<TransactionOwner, string>> = {};
 	private readonly transactionOpening: Partial<Record<TransactionOwner, Promise<void>>> = {};
 
 	constructor(options: RuntimeRpcOptions) {
@@ -155,9 +161,42 @@ export class RuntimeRpc {
 		options: RpcCallOptions = {},
 	): Promise<RpcOperationResponse<O>> {
 		await this.ensureHandshake();
-		if (requiresGrasshopper(operation)) await this.readiness.ensureReady();
+		const owner: RpcOperationOwner = RPC_OPERATION_OWNERS[operation];
+		if (owner === "core" || classifyOperation(operation) !== "mutation") return this.invokeOwned(operation, args, options);
+		const previous = this.mutationQueue[owner];
+		const pending = (async () => {
+			if (previous) await previous.catch(() => {});
+			return this.invokeOwned(operation, args, options);
+		})();
+		this.mutationQueue[owner] = pending;
+		try { return await pending; }
+		finally { if (this.mutationQueue[owner] === pending) delete this.mutationQueue[owner]; }
+	}
+
+	private async invokeOwned<O extends OperationName>(operation: O, args: RequestArgsFor<O>, options: RpcCallOptions): Promise<RpcOperationResponse<O>> {
+		if (requiresGrasshopper(operation)) await this.readiness.ensureReady(operation !== "manageGrasshopperDocument");
+		const owner: RpcOperationOwner = RPC_OPERATION_OWNERS[operation];
+		const boundary = DOCUMENT_BOUNDARIES.has(operation);
+		if (owner !== "core" && classifyOperation(operation) === "mutation" && !TRANSACTION_OPERATIONS.has(operation)) {
+			await this.reconcileTransaction(owner);
+		}
 		await this.ensureTransactionForMutation(operation);
-		return this.invokeDirect(operation, args, options);
+		const segment = owner === "core" ? undefined : this.segments[owner];
+		const callArgs = !boundary && segment?.state === "active" && classifyOperation(operation) === "mutation"
+			? { ...args, expectedSegment: segment } as RequestArgsFor<O> : args;
+		try {
+			const response = await this.invokeDirect(operation, callArgs, options);
+			if (owner !== "core") this.observeTransaction(owner, response.result.data);
+			return response;
+		} catch (error) {
+			if (owner !== "core" && error instanceof RpcOutcomeUnknownError) this.uncertainTransitions[owner] = error.outcome.operationId;
+			throw error;
+		} finally {
+			if (boundary && owner !== "core") {
+				this.transactionOpen[owner] = false;
+				clearDocumentGuidAliases(owner);
+			}
+		}
 	}
 
 	async request<T>(operation: OperationName, args: JsonObject): Promise<T> {
@@ -199,8 +238,8 @@ export class RuntimeRpc {
 	async close(): Promise<void> {
 		this.noticeListeners.clear();
 		this.readiness.close();
-		await this.cancelAgentTurn();
-		await this.transport.close();
+		try { await this.cancelAgentTurn(); }
+		finally { await this.transport.close(); }
 	}
 
 	private publishNotice(notice: RuntimeRpcNotice): void {
@@ -284,8 +323,9 @@ export class RuntimeRpc {
 	private async ensureTransactionForMutation(operation: OperationName): Promise<void> {
 		if (!this.turnAcceptingMutations
 			|| classifyOperation(operation) !== "mutation"
-			|| TRANSACTION_OPERATIONS.has(operation)) return;
-		const owner = RPC_OPERATION_OWNERS[operation];
+			|| TRANSACTION_OPERATIONS.has(operation)
+			|| DOCUMENT_BOUNDARIES.has(operation)) return;
+		const owner: RpcOperationOwner = RPC_OPERATION_OWNERS[operation];
 		if (owner !== "rhino" && owner !== "grasshopper") return;
 		if (this.transactionOpen[owner]) return;
 		if (this.transactionOpening[owner]) return this.transactionOpening[owner];
@@ -313,7 +353,10 @@ export class RuntimeRpc {
 
 	private async finishAgentTurn(outcome: "commit" | "cancel"): Promise<void> {
 		this.turnAcceptingMutations = false;
+		await Promise.allSettled(Object.values(this.mutationQueue));
 		await Promise.all(Object.values(this.transactionOpening));
+		await this.reconcileTransaction("grasshopper");
+		await this.reconcileTransaction("rhino");
 		const grasshopperOpen = this.transactionOpen.grasshopper;
 		const rhinoOpen = this.transactionOpen.rhino;
 		this.transactionOpen.grasshopper = false;
@@ -335,15 +378,63 @@ export class RuntimeRpc {
 		}
 	}
 
-	private async runTransactionControl(
-		operation: TransactionOperation,
-		args: JsonObject,
-	): Promise<boolean> {
+	private observeTransaction(owner: TransactionOwner, data: unknown): void {
+		const candidate = data && typeof data === "object" && "transaction" in data ? data.transaction : undefined;
+		if (candidate && typeof candidate === "object" && "segmentId" in candidate && "epoch" in candidate) {
+			const segment = candidate as DocumentTransactionState;
+			if (segment.lifecycleInstanceId !== this.lifecycleInstanceId) throw new Error("Transaction belongs to a stale host lifecycle.");
+			// Idle segments have no document identity. Ending an undo record does not
+			// invalidate the aliases read from the same open document.
+			if (segment.documentId) this.observeAliasDocument(owner, segment.documentId);
+			this.segments[owner] = segment;
+			this.transactionOpen[owner] = segment.state === "active";
+		}
+		if (data && typeof data === "object" && "activeDocumentId" in data) {
+			if (typeof data.activeDocumentId === "string") this.observeAliasDocument(owner, data.activeDocumentId);
+			else if (data.activeDocumentId === null) {
+				clearDocumentGuidAliases(owner);
+				delete this.aliasDocuments[owner];
+			}
+		}
+	}
+
+	private observeAliasDocument(owner: TransactionOwner, documentId: string): void {
+		const previous = this.aliasDocuments[owner];
+		if (previous !== undefined && previous !== documentId) clearDocumentGuidAliases(owner);
+		this.aliasDocuments[owner] = documentId;
+	}
+
+	private async reconcileTransaction(owner: TransactionOwner): Promise<void> {
+		const operationId = this.uncertainTransitions[owner];
+		if (operationId) {
+			const result = await this.invokeDirect("getOperationResult", { operationId });
+			const data = result.result.data;
+			if (!data || typeof data !== "object" || !("state" in data) || data.state !== "terminal")
+				throw new Error(`Operation ${operationId} remains uncertain. Dependent edits and cancellation are blocked.`);
+		}
+		if (operationId || this.segments[owner]) {
+			const response = await this.invokeDirect("getDocumentTransactionState", { owner });
+			const data = response.result.data;
+			if (!data || typeof data !== "object" || !("segmentId" in data)) throw new Error("Transaction reconciliation returned no segment state.");
+			this.observeTransaction(owner, { transaction: data });
+			delete this.uncertainTransitions[owner];
+		}
+	}
+
+	private async runTransactionControl(operation: TransactionOperation, args: JsonObject): Promise<boolean> {
+		const owner = RPC_OPERATION_OWNERS[operation] as TransactionOwner;
+		if (!operation.startsWith("begin")) await this.reconcileTransaction(owner);
+		const segment = this.segments[owner];
+		if (!operation.startsWith("begin") && segment && segment.state !== "active") return true;
 		try {
-			await this.invokeDirect(operation, args as never);
+			const response = await this.invokeDirect(operation, segment?.state === "active" ? { ...args, expectedSegment: segment } : args);
+			this.observeTransaction(owner, response.result.data);
+			const data = response.result.data;
+			if (data && typeof data === "object" && "ok" in data && data.ok === false) throw new Error(`Transaction control ${operation} failed: ${JSON.stringify(data)}`);
 			return true;
-		} catch {
-			return false;
+		} catch (error) {
+			if (error instanceof RpcOutcomeUnknownError) this.uncertainTransitions[owner] = error.outcome.operationId;
+			throw error;
 		}
 	}
 
@@ -379,7 +470,20 @@ const TRANSACTION_OPERATIONS = new Set<OperationName>([
 	"cancelRhinoAgentTransaction",
 ]);
 
+const DOCUMENT_BOUNDARIES = new Set<OperationName>(["manageRhinoDocument", "manageGrasshopperDocument"]);
+const PASSIVE_DOCUMENT_READS = new Set<OperationName>(["listGrasshopperDocuments", "getGrasshopperDocument", "getGrasshopperDocumentSettings"]);
+
 export const RPC_OPERATION_OWNERS = Object.freeze({
+	browseDocumentFiles: "core",
+	getDocumentTransactionState: "core",
+	listRhinoDocuments: "rhino",
+	getRhinoDocument: "rhino",
+	getRhinoDocumentSettings: "rhino",
+	manageRhinoDocument: "rhino",
+	listGrasshopperDocuments: "grasshopper",
+	getGrasshopperDocument: "grasshopper",
+	getGrasshopperDocumentSettings: "grasshopper",
+	manageGrasshopperDocument: "grasshopper",
 	getRuntimeStatus: "core",
 	getOperationResult: "core",
 	lifecycleHandshake: "core",
@@ -442,7 +546,7 @@ export const RPC_OPERATION_OWNERS = Object.freeze({
 } as const satisfies Record<OperationName, RpcOperationOwner>);
 
 export function requiresGrasshopper(operation: OperationName): boolean {
-	return RPC_OPERATION_OWNERS[operation] === "grasshopper";
+	return RPC_OPERATION_OWNERS[operation] === "grasshopper" && !PASSIVE_DOCUMENT_READS.has(operation);
 }
 
 let sharedRuntime: RuntimeRpc | null = null;

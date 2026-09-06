@@ -21,13 +21,22 @@ public sealed class HostOperationRouter : IRpcOperationHandler
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        if (request.Operation == RpcOperation.browseDocumentFiles) {
+            try { return DocumentSession.Result(DocumentFiles.Browse(request.Args)); }
+            catch (Exception error) { return DocumentSession.Result(new { ok = false, error = new { code = error is DocumentOperationException domain ? domain.Code : "FILE_SYSTEM_ERROR", message = error.Message } }); }
+        }
+        if (request.Operation == RpcOperation.getDocumentTransactionState)
+            { DocumentSession.ReconcileGrasshopper?.Invoke(); return DocumentSession.Result(DocumentSession.Segment(request.Args.GetProperty("owner").GetString()!)); }
+        if (request.Operation == RpcOperation.listGrasshopperDocuments && !_grasshopper.TryGetAdapter(out _))
+            return DocumentSession.Result(new { documents = Array.Empty<object>(), activeDocumentId = (string?)null,
+                lifecycleInstanceId = DocumentSession.LifecycleInstanceId, capabilities = new { loaded = false, state = _grasshopper.Status.StateName } });
         if (_rhino.TryGetAdapter(out var rhino) && rhino!.CanExecute(request.Operation))
             return rhino.Execute(request);
 
         if (_grasshopper.TryGetAdapter(out var grasshopper)
             && grasshopper!.CanExecute(request.Operation))
         {
-            if (!grasshopper.DocumentStatus.HasActiveDocument)
+            if (!grasshopper.DocumentStatus.HasActiveDocument && request.Operation is not (RpcOperation.listGrasshopperDocuments or RpcOperation.getGrasshopperDocument or RpcOperation.getGrasshopperDocumentSettings or RpcOperation.manageGrasshopperDocument))
             {
                 return Failure(
                     RpcResultClass.no_active_grasshopper_document,
