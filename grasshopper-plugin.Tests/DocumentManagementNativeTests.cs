@@ -95,6 +95,8 @@ public static class DocumentManagementNativeTests
         Assert.True(doc.Views.GetStandardRhinoViews().Length > 0, "A newly created visible Rhino document must have a viewport.");
         var initial = service.Describe(doc);
         var pointId = doc.Objects.AddPoint(new Point3d(12, 34, 56));
+        MacDocumentWindows.MarkModified(doc);
+        Assert.True(service.Describe(doc).IsModified);
         Assert.NotEqual(Guid.Empty, pointId);
         Assert.NotEqual(initial.StateToken, service.Describe(doc).StateToken);
 
@@ -114,7 +116,7 @@ public static class DocumentManagementNativeTests
             expectedStateToken = service.Describe(doc).StateToken, path });
         Assert.True(File.Exists(path));
         Assert.True(DocumentFiles.Same(path, doc.Path));
-        Assert.False(doc.Modified);
+        Assert.False(service.Describe(doc).IsModified);
         Success(service, RpcOperation.manageRhinoDocument, new { action = "close", documentId = id,
             expectedStateToken = service.Describe(doc).StateToken, onUnsaved = "fail" });
         result = Success(service, RpcOperation.manageRhinoDocument, new { action = "open", path,
@@ -156,6 +158,10 @@ public static class DocumentManagementNativeTests
             var id = created.GetProperty("document").GetProperty("documentId").GetString()!;
             var doc = service.Resolve(id);
             doc.Objects.AddPoint(Point3d.Origin);
+            // AppKit normally receives this notification when native undo groups close.
+            // The test runs in one Idle callback, so explicitly establish its unsaved state.
+            MacDocumentWindows.MarkModified(doc);
+            Assert.True(service.Describe(doc).IsModified, "Property callback fixture must be dirty: " + edit.Name);
             var callbacks = 0;
             EventHandler<Rhino.DocumentSaveEventArgs> callback = (_, e) => {
                 if (e.Document != doc) return;
@@ -164,13 +170,20 @@ public static class DocumentManagementNativeTests
             };
             RhinoDoc.EndSaveDocument += callback;
             var path = Path.Combine(root, "property-callback-" + edit.Name + ".3dm");
-            try { Error(service, RpcOperation.manageRhinoDocument, new { action = "close", documentId = id,
-                expectedStateToken = service.Describe(doc).StateToken, onUnsaved = "save", savePath = path }, "DOCUMENT_CHANGED"); }
+            try {
+                var observed = service.Describe(doc);
+                Assert.True(observed.IsModified, "Inspection must retain fixture dirty state: " + edit.Name);
+                var response = service.Execute(RpcOperation.manageRhinoDocument, Json(new { action = "close", documentId = id,
+                    expectedStateToken = observed.StateToken, onUnsaved = "save", savePath = path })).Data!.Value;
+                File.AppendAllText(Path.Combine(root, "progress.log"), edit.Name + ": callbacks=" + callbacks + "; " + response + "\n");
+                Assert.False(response.GetProperty("ok").GetBoolean(), edit.Name + ": " + response);
+                Assert.Equal("DOCUMENT_CHANGED", response.GetProperty("error").GetProperty("code").GetString());
+            }
             finally { RhinoDoc.EndSaveDocument -= callback; }
             Assert.True(callbacks > 0, edit.Name + " save callback did not run");
             Assert.True(File.Exists(path));
             Assert.Same(doc, service.Resolve(id));
-            Assert.True(doc.Modified, edit.Name + " change must remain unsaved");
+            Assert.True(service.Describe(doc).IsModified, edit.Name + " change must remain unsaved");
             Success(service, RpcOperation.manageRhinoDocument, new { action = "close", documentId = id,
                 expectedStateToken = service.Describe(doc).StateToken, onUnsaved = "discard" });
         }

@@ -8,8 +8,8 @@ The agent can manage `.3dm`, `.gh`, and `.ghx` documents with `rh_document` and 
 
 | Check | Result |
 | --- | --- |
-| Full Vitest suite | 456 tests across 52 files passed |
-| Hopper.Core | 218 tests passed |
+| Full Vitest suite | 464 tests across 52 files passed |
+| Hopper.Core | 219 tests passed |
 | Standalone Grasshopper test host | 69 tests passed; two native graph tests excluded and run inside Rhino instead |
 | Native graph tests | Both passed inside Rhino |
 | Cross-language RPC | Authenticated handshake, query, and mutation passed |
@@ -19,6 +19,10 @@ The agent can manage `.3dm`, `.gh`, and `.ghx` documents with `rh_document` and 
 | Native Python/C# execution | `RhinoScriptNativeTests.RunAll` passed |
 
 Native checks ran on Rhino 8.34.26223.11002 for macOS. The document test covers visible new documents, Unicode paths, `.3dm`/`.gh`/`.ghx` round trips, templates, stale state, tolerance revisions, destination collisions, solver-disabled edits, external saves, and changes made from save callbacks. The script test runs Python and C#, rejects stale document/settings targets before execution, and verifies that one native Undo removes both scripts' geometry. Both tests restore the original document inventory and check that the original Rhino document's modified state is preserved.
+
+The PR review follow-up adds native save callbacks that change notes, model basepoint, render DPI, and earth-anchor data. Each save-before-close reports `DOCUMENT_CHANGED`, keeps the model open, and marks it unsaved. An ordinary save clears the explicitly established AppKit edited state. Background GH path/save/Undo events preserve another definition's agent transaction, and cancel still restores that definition.
+
+New Node regressions cover editable blank lines, continuation after long source lines, execution history longer than revision history, native execution preconditions without an extra Node query, and closing the RPC transport when uncertainty prevents cancellation. The duplicate `expectedSettingsRevision` field was removed; callers use `expectedDocument.settingsRevision`. The review also removed duplicate activation/effect reporting and condensed the completed plans. Workspace-wide replay identity and execution recovery remain intact.
 
 Storage, pinned asset execution, replay, concurrency, restart recovery, and uncertain-result handling have automated Node coverage. The native script test invokes the shared executor directly; it does not constitute an end-to-end UI test of asset creation through execution.
 
