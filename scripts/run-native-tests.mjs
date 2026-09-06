@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, writeFile, access } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, access, mkdir, readdir, copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, resolve, basename } from "node:path";
 
 const usage = `Run selected parameterless test methods inside an explicitly selected running Rhino.
 
@@ -39,7 +39,7 @@ for (const required of ["--rhino", "--assembly", "--type"]) {
 	if (!values.has(required)) throw new Error(`Missing ${required}.\n${usage}`);
 }
 if (methods.length === 0) throw new Error("At least one --method is required.");
-const assembly = resolve(values.get("--assembly"));
+const inputAssembly = resolve(values.get("--assembly"));
 const rhinoCode = values.get("--rhino-code")
 	?? "/Applications/Rhino 8.app/Contents/Frameworks/RhCore.framework/Versions/A/Resources/RhinoCode.dll";
 if (!isAbsolute(rhinoCode)) throw new Error("--rhino-code must be an absolute path.");
@@ -47,8 +47,16 @@ const timeout = Number(values.get("--timeout-ms") ?? 120_000);
 if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 600_000) {
 	throw new Error("--timeout-ms must be an integer between 1 and 600000.");
 }
-await Promise.all([access(assembly), access(rhinoCode)]);
+await Promise.all([access(inputAssembly), access(rhinoCode)]);
 const runDir = await mkdtemp(join(tmpdir(), "hopper-native-tests-"));
+// Rhino can retain mapped assemblies after an ALC unload. A unique snapshot path
+// prevents a later build from silently reusing an older native test image.
+const snapshotDirectory = join(runDir, "assemblies");
+await mkdir(snapshotDirectory);
+await Promise.all((await readdir(dirname(inputAssembly), { withFileTypes: true }))
+    .filter((entry) => entry.isFile())
+    .map((entry) => copyFile(join(dirname(inputAssembly), entry.name), join(snapshotDirectory, entry.name))));
+const assembly = join(snapshotDirectory, basename(inputAssembly));
 const resultPath = join(runDir, "result.txt");
 const sourcePath = join(runDir, "run.cs");
 // C# verbatim literals keep paths and method names as data, including quotes.
@@ -61,6 +69,12 @@ using System.Reflection;
 using System.Runtime.Loader;
 using System.Threading.Tasks;
 
+// Run after RhinoCode releases its document-bound script context, just as the
+// production dispatcher runs operations from a native UI callback.
+EventHandler runTests = null;
+runTests = (sender, args) =>
+{
+Rhino.RhinoApp.Idle -= runTests;
 var output = new System.Collections.Generic.List<string>();
 var directory = ${literal(dirname(assembly))};
 var context = new HopperTestContext(directory);
@@ -97,6 +111,8 @@ finally
     File.WriteAllLines(${literal(resultPath)}, output);
     context.Unload();
 }
+};
+Rhino.RhinoApp.Idle += runTests;
 
 public class HopperTestContext : AssemblyLoadContext
 {
