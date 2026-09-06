@@ -382,3 +382,11 @@ For new Grasshopper builds, the canonical workflow is: resolve unusual or ambigu
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+### Native document tools
+
+`rh_document` manages .3dm files and `gh_document` manages .gh/.ghx definitions. Both expose `list`, `get`, `getSettings`, `browse`, `new`, `open`, `activate`, `save`, `saveAs`, and `close`. Search for file, units, or tolerance in the progressive tool catalog. Read each host's returned capabilities for available native actions.
+
+Document settings report model units, absolute/angle/relative tolerances, display precision, and separate layout settings. Grasshopper reports the Rhino context supplying effective settings and any association mismatch. Settings reads do not change the document.
+
+File mutations use live document handles and optimistic state tokens. Paths are absolute; overwrites and unsaved changes are explicit. File transitions end the editing segment, so later geometry Undo or turn cancellation cannot undo a file save. After uncertain replies, the agent reconciles operation status and transaction ownership before further edits. Native platform and event-ordering verification remains required before release.

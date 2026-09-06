@@ -24,6 +24,14 @@
     },
     "queryOperation": {
       "enum": [
+        "listRhinoDocuments",
+        "getRhinoDocument",
+        "getRhinoDocumentSettings",
+        "listGrasshopperDocuments",
+        "getGrasshopperDocument",
+        "getGrasshopperDocumentSettings",
+        "browseDocumentFiles",
+        "getDocumentTransactionState",
         "getRuntimeStatus",
         "getOperationResult",
         "listAllComponents",
@@ -45,6 +53,8 @@
     },
     "mutationOperation": {
       "enum": [
+        "manageRhinoDocument",
+        "manageGrasshopperDocument",
         "applyGraph",
         "runRhinoScript",
         "controlRhinoView",

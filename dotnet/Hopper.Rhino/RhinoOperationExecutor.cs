@@ -1,12 +1,18 @@
 using System.Linq;
+using System.Text.Json;
+using Hopper.Core.Protocol;
 using Hopper.Core.Operations;
 using Hopper.Rhino.Host;
 using Rhino;
 
 namespace rhino_zmq_poc
 {
-    internal sealed class RhinoOperationExecutor : IRhinoOperationExecutor
+    internal sealed class RhinoOperationExecutor : IRhinoOperationExecutor, IRhinoDocumentExecutor
     {
+        private readonly RhinoDocumentOperations _documents = RhinoDocumentOperations.Instance;
+        public object CurrentSettings => RhinoDoc.ActiveDoc == null ? null : _documents.ReadSettings(null);
+        public OperationResultV2 DocumentOperation(RpcOperation operation, JsonElement args) => _documents.Execute(operation, args);
+
         public OperationDocumentStatus DocumentStatus
         {
             get
@@ -39,6 +45,7 @@ namespace rhino_zmq_poc
 
         public RhinoScriptExecution RunScript(RhinoScriptArguments arguments)
         {
+            _documents.ValidateExpected(arguments.ExpectedDocument);
             var result = RhinoScriptExecutor.Run(new RunRhinoScriptParams
             {
                 Mode = arguments.Mode,
@@ -60,14 +67,13 @@ namespace rhino_zmq_poc
         public RhinoTransactionExecution BeginTransaction(string name)
         {
             var result = RhinoAgentTransaction.Begin(RhinoDoc.ActiveDoc, name);
+            if (!result.Contains(" error:")) DocumentSession.Advance("rhino", _documents.ActiveId, "active");
             return Transaction(result);
         }
 
-        public RhinoTransactionExecution CommitTransaction() =>
-            Transaction(RhinoAgentTransaction.CommitActive());
+        public RhinoTransactionExecution CommitTransaction() { var result = Transaction(RhinoAgentTransaction.CommitActive()); DocumentSession.Advance("rhino", null, "idle"); return result; }
 
-        public RhinoTransactionExecution CancelTransaction() =>
-            Transaction(RhinoAgentTransaction.CancelActive());
+        public RhinoTransactionExecution CancelTransaction() { var result = Transaction(RhinoAgentTransaction.CancelActive()); DocumentSession.Advance("rhino", null, "idle"); return result; }
 
         public void CleanupOpenTransactions() => RhinoAgentTransaction.CancelActive();
 

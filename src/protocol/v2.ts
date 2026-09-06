@@ -1,6 +1,16 @@
+import type { DocumentRequest } from "../types/document-management.js";
 export const PROTOCOL_VERSION = 2 as const;
 
 export const QUERY_OPERATIONS = [
+	"listRhinoDocuments",
+	"getRhinoDocument",
+	"getRhinoDocumentSettings",
+	"listGrasshopperDocuments",
+	"getGrasshopperDocument",
+	"getGrasshopperDocumentSettings",
+	"browseDocumentFiles",
+	"getDocumentTransactionState",
+
 	"getRuntimeStatus",
 	"getOperationResult",
 	"listAllComponents",
@@ -20,6 +30,9 @@ export const CONTROL_OPERATIONS = [
 ] as const;
 
 export const MUTATION_OPERATIONS = [
+	"manageRhinoDocument",
+	"manageGrasshopperDocument",
+
 	"applyGraph",
 	"runRhinoScript",
 	"controlRhinoView",
@@ -129,7 +142,12 @@ export type LifecycleHandshakeArgs = {
 export type RecoveryOperationArgs = { operationId: string };
 
 export type RequestArgsFor<O extends OperationName> =
-	O extends "lifecycleHandshake" ? LifecycleHandshakeArgs
+	O extends "manageRhinoDocument" | "manageGrasshopperDocument" ? DocumentRequest
+		: O extends "getRhinoDocument" | "getRhinoDocumentSettings" | "getGrasshopperDocument" | "getGrasshopperDocumentSettings" ? { documentId: string }
+		: O extends "getDocumentTransactionState" ? { owner: "rhino" | "grasshopper" }
+		: O extends "browseDocumentFiles" ? { kind: "rhino" | "grasshopper"; path: string; cursor?: string; limit?: number }
+		: O extends "listRhinoDocuments" | "listGrasshopperDocuments" ? Record<string, never>
+		: O extends "lifecycleHandshake" ? LifecycleHandshakeArgs
 		: O extends "getRuntimeStatus" | "startGrasshopper" ? Record<string, never>
 			: O extends "getOperationResult" | "cancelOperation" ? RecoveryOperationArgs
 				: JsonObject;

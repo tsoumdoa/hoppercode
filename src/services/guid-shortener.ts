@@ -143,3 +143,11 @@ export function resolveRhinoGuid(value: string): string {
 export function resolveRhinoGuids(values: string[]): string[] {
 	return values.map(resolveRhinoGuid);
 }
+
+/** Forget aliases scoped to the document that just ended or changed. Type GUIDs are global. */
+export function clearDocumentGuidAliases(owner: "rhino" | "grasshopper"): void {
+	const store = stores[owner === "rhino" ? "rhino" : "instance"];
+	store.shortToFull.clear();
+	store.normalizedToFull.clear();
+	store.normalizedToShort.clear();
+}

@@ -6,6 +6,17 @@ namespace Hopper.Core.Protocol;
 
 public enum RpcOperation
 {
+    listRhinoDocuments,
+    getRhinoDocument,
+    getRhinoDocumentSettings,
+    listGrasshopperDocuments,
+    getGrasshopperDocument,
+    getGrasshopperDocumentSettings,
+    browseDocumentFiles,
+    getDocumentTransactionState,
+    manageRhinoDocument,
+    manageGrasshopperDocument,
+
     getRuntimeStatus,
     getOperationResult,
     listAllComponents,
@@ -337,6 +348,15 @@ public static class RpcV2Operations
 {
     public static readonly RpcOperation[] Query =
     {
+        RpcOperation.listRhinoDocuments,
+        RpcOperation.getRhinoDocument,
+        RpcOperation.getRhinoDocumentSettings,
+        RpcOperation.listGrasshopperDocuments,
+        RpcOperation.getGrasshopperDocument,
+        RpcOperation.getGrasshopperDocumentSettings,
+        RpcOperation.browseDocumentFiles,
+        RpcOperation.getDocumentTransactionState,
+
         RpcOperation.getRuntimeStatus,
         RpcOperation.getOperationResult,
         RpcOperation.listAllComponents,
@@ -358,6 +378,9 @@ public static class RpcV2Operations
 
     public static readonly RpcOperation[] Mutation =
     {
+        RpcOperation.manageRhinoDocument,
+        RpcOperation.manageGrasshopperDocument,
+
         RpcOperation.applyGraph,
         RpcOperation.runRhinoScript,
         RpcOperation.controlRhinoView,

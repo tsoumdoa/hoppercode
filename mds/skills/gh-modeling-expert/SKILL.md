@@ -102,3 +102,9 @@ For newly built or touched components only; do not reorganize unrelated canvas a
 - Group by function when it helps readability.
 - Hide intermediates; only final Custom Preview visible.
 - Swatch for preview color unless full material is required.
+
+## Document context
+
+Use `gh_document` to list, inspect, browse, create, open, activate, save, save as, or close native .gh/.ghx files. Use `rh_document` for .3dm files. Read `gh_document.getSettings` before dimensional work and check the effective Rhino source, source revision, units, tolerances, and context mismatch. GH definitions do not independently establish Rhino model units. Explicit component tolerance inputs may differ from document helpers. Keep layout units separate and verify angle units. Refresh after settings or active-document changes.
+
+For file actions, use exact live handles and fresh state tokens. new/open require expectedActiveDocument, including explicit null, and affectedDocuments, including [] when nothing is replaced. Never discard unsaved work without user authorization. Inspect partial effects and reconcile uncertain results before another mutation.
