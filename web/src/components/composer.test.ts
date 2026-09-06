@@ -12,10 +12,14 @@ const source: DraftImage = {
 };
 const submit = vi.fn();
 vi.mock("./image-annotation-dialog", () => ({
-	ImageAnnotationDialog: ({ attachment, onSave, onClose }: { attachment: DraftImage; onSave(image: DraftImage): void; onClose(): void }) => createElement("div", { role: "dialog" },
-		createElement("p", null, attachment.scene ? "Existing annotations" : "New annotations"),
+	ImageAnnotationDialog: ({ attachment, onSave, onClose }: { attachment?: DraftImage; onSave(image: DraftImage): void; onClose(): void }) => createElement("div", { role: "dialog" },
+		createElement("p", null, attachment?.scene ? "Existing annotations" : attachment ? "New annotations" : "Blank canvas"),
 		createElement("button", { onClick: onClose }, "Cancel"),
-		createElement("button", { onClick: () => onSave({ ...attachment, image: { ...attachment.image, data: "bWFya2Vk" }, scene: { elements: [], files: {}, appState: {} } }) }, "Save annotations"),
+		createElement("button", { onClick: () => onSave({
+			...(attachment ?? { id: "drawing-1", name: "Drawing.png" }),
+			image: { type: "image", mimeType: "image/png", data: "bWFya2Vk" },
+			scene: { elements: [], files: {}, appState: {} },
+		}) }, attachment?.original ? "Save annotations" : "Save drawing"),
 	),
 }));
 vi.mock("../lib/image-attachments", async (original) => ({
@@ -92,4 +96,39 @@ it("blocks image submission for text-only models and allows removing the image",
 	expect(container.querySelector('[role="alert"]')?.textContent).toContain("supports images");
 	await act(async () => button("Remove plan.png").click());
 	expect(container.querySelector('[role="alert"]')).toBeNull();
+});
+
+it("creates a standalone drawing, reopens it for editing, and sends it without text", async () => {
+	await act(async () => root.render(createElement(Harness, { initial: [] })));
+	await act(async () => button("New drawing").click());
+	expect(container.textContent).toContain("Blank canvas");
+	expect(container.querySelector("img")).toBeNull();
+	await act(async () => byText("Cancel").click());
+	expect(container.querySelector("img")).toBeNull();
+	expect(button("Send message").disabled).toBe(true);
+	await act(async () => button("New drawing").click());
+	await act(async () => byText("Save drawing").click());
+	expect(container.querySelectorAll("img")).toHaveLength(1);
+	await act(async () => button("Annotate Drawing.png").click());
+	expect(container.textContent).toContain("Existing annotations");
+	await act(async () => byText("Save drawing").click());
+	expect(container.querySelectorAll("img")).toHaveLength(1);
+	await act(async () => button("Send message").click());
+	const [drawing] = submit.mock.calls[0][0] as DraftImage[];
+	expect(drawing.image).toMatchObject({ mimeType: "image/png", data: "bWFya2Vk" });
+	expect(drawing.original).toBeUndefined();
+	expect(drawing.scene).toBeDefined();
+});
+
+it("counts new drawings toward the shared four-attachment limit", async () => {
+	await act(async () => root.render(createElement(Harness, {
+		initial: [source, { ...source, id: "image-2" }, { ...source, id: "image-3" }],
+	})));
+	await act(async () => button("New drawing").click());
+	await act(async () => byText("Save drawing").click());
+	expect(container.querySelectorAll("img")).toHaveLength(4);
+	expect(button("New drawing").disabled).toBe(true);
+	expect(button("Attach images").disabled).toBe(true);
+	await act(async () => button("Remove Drawing.png").click());
+	expect(button("New drawing").disabled).toBe(false);
 });

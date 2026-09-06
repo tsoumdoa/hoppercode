@@ -139,7 +139,7 @@ export class EmbeddedPiHost {
 		return host;
 	}
 
-	async prompt(text: string, images?: ImageAttachment[]): Promise<void> {
+	async prompt(text: string, images?: ImageAttachment[], onAccepted?: () => void): Promise<void> {
 		this.assertUsable();
 		if (!this.runtime.session.model) throw new Error("No authenticated model is selected");
 		if (this.promptPending) throw new Error("Hopper is already processing a prompt");
@@ -150,7 +150,10 @@ export class EmbeddedPiHost {
 			this.assertUsable();
 			if (generation !== this.promptGeneration) throw new Error("Prompt cancelled before it started");
 			this.assertImageSupport(images);
-			await this.runtime.session.prompt(this.skills.expandCommand(text), { source: "rpc", images });
+			await this.runtime.session.prompt(this.skills.expandCommand(text), {
+				source: "rpc", images,
+				...(onAccepted ? { preflightResult: (success: boolean) => { if (success) onAccepted(); } } : {}),
+			});
 		} finally { this.promptPending = false; }
 	}
 

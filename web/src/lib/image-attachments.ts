@@ -11,12 +11,9 @@ export type AnnotationScene = {
 export type DraftImage = {
 	id: string;
 	name: string;
-	width: number;
-	height: number;
 	image: ImageAttachment;
-	original: ImageAttachment;
 	scene?: AnnotationScene;
-};
+} & ({ original: ImageAttachment; width: number; height: number } | { original?: never; scene: AnnotationScene });
 
 export const IMAGE_ACCEPT = "image/png,image/jpeg,image/webp,image/gif";
 export const imageUrl = (image: ImageAttachment) => `data:${image.mimeType};base64,${image.data}`;

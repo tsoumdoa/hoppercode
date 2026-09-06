@@ -1,9 +1,9 @@
 import { extname } from "node:path";
 
 export const RHINO_PACKAGE_TARGETS = Object.freeze({
-	// Pi 0.85 adds esbuild as a runtime dependency, including one native binary.
-	"mac-arm64": Object.freeze({ os: "darwin", cpu: "arm64", maxStagedBytes: 93 * 1024 * 1024 }),
-	"win-x64": Object.freeze({ os: "win32", cpu: "x64", maxStagedBytes: 92 * 1024 * 1024 }),
+	// Measured with Pi 0.85.1 and Excalidraw; see docs/rhino-package-baselines.md.
+	"mac-arm64": Object.freeze({ os: "darwin", cpu: "arm64", maxStagedBytes: 128 * 1024 * 1024 }),
+	"win-x64": Object.freeze({ os: "win32", cpu: "x64", maxStagedBytes: 128 * 1024 * 1024 }),
 });
 
 export const PACKAGE_MANIFEST_NAME = "rhino-package-manifest.json";

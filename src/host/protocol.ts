@@ -73,6 +73,7 @@ export type HostSnapshot = {
 };
 
 export type ServerMessage =
+	| { type: "message_accepted"; requestId: string }
 	| { type: "snapshot"; snapshot: HostSnapshot }
 	| { type: "agent_event"; event: JsonValue }
 	| UiRequestMessage
@@ -82,7 +83,7 @@ export type ServerMessage =
 	| { type: "auth_event"; event: JsonValue }
 	| { type: "status"; status: string; message?: string; scope?: string; provider?: string; streaming?: boolean }
 	| { type: "session_replaced"; session: HostSnapshot }
-	| { type: "error"; requestType?: string; message: string };
+	| { type: "error"; requestType?: string; requestId?: string; message: string };
 
 export type ImageAttachment = { type: "image"; data: string; mimeType: "image/png" | "image/jpeg" | "image/webp" | "image/gif" };
 export const MAX_IMAGES = 4;
@@ -103,9 +104,9 @@ export function parseImages(value: unknown): ImageAttachment[] | undefined {
 
 export type ClientMessage =
 	| { type: "authenticate"; token: string }
-	| { type: "prompt"; text: string; images?: ImageAttachment[] }
-	| { type: "steer"; text: string; images?: ImageAttachment[] }
-	| { type: "follow_up"; text: string; images?: ImageAttachment[] }
+	| { type: "prompt"; text: string; images?: ImageAttachment[]; requestId?: string }
+	| { type: "steer"; text: string; images?: ImageAttachment[]; requestId?: string }
+	| { type: "follow_up"; text: string; images?: ImageAttachment[]; requestId?: string }
 	| { type: "abort" }
 	| { type: "new_session" }
 	| { type: "set_model"; provider: string; id: string }
@@ -145,7 +146,8 @@ export function parseClientMessage(input: string): ClientMessage {
 		case "follow_up": {
 			const images = parseImages(value.images);
 			const text = images?.length && typeof value.text === "string" ? value.text : stringField(value, "text");
-			return { type: value.type, text, ...(images?.length ? { images } : {}) };
+			const requestId = value.requestId === undefined ? undefined : stringField(value, "requestId");
+			return { type: value.type, text, ...(images?.length ? { images } : {}), ...(requestId ? { requestId } : {}) };
 		}
 		case "abort":
 		case "new_session":

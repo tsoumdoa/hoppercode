@@ -82,6 +82,9 @@ export class MockHopperTransport {
 	}
 
 	send(message: ClientMessage) {
+		if ((message.type === "prompt" || message.type === "steer" || message.type === "follow_up") && message.requestId) {
+			this.emit({ type: "message_accepted", requestId: message.requestId });
+		}
 		switch (message.type) {
 			case "authenticate": this.connect(); break;
 			case "prompt": this.runPrompt(String(message.text ?? "")); break;

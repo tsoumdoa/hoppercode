@@ -50,6 +50,8 @@ export function App() {
 
 	const [draft, setDraft] = useState("");
 	const [images, setImages] = useState<DraftImage[]>([]);
+	const [submitting, setSubmitting] = useState(false);
+	const submission = useRef<object | null>(null);
 	const selectedModel = useHopperStore((state) => state.selectedModel);
 	const imagesSupported = selectedModel?.input?.includes("image") !== false;
 	// Explicit delivery choice made while a turn runs; null means the default for the current state.
@@ -92,13 +94,25 @@ export function App() {
 	}, [connected, sessionId]);
 
 	const submit = () => {
+		if (submission.current) return;
 		const text = draft.trim();
 		if (!text && !images.length) return;
 		if (images.length && !imagesSupported) return;
-		if (prompt(text, mode, images.map((attachment) => attachment.image))) { setDraft(""); setImages([]); }
+		const current = {};
+		submission.current = current;
+		setSubmitting(true);
+		const finish = (accepted: boolean) => {
+			if (submission.current !== current) return;
+			submission.current = null;
+			setSubmitting(false);
+			if (accepted) { setDraft(""); setImages([]); }
+		};
+		if (!prompt(text, mode, images.map((attachment) => attachment.image), {
+			onAccepted: () => finish(true), onRejected: () => finish(false),
+		})) finish(false);
 	};
 
-	useEffect(() => { setImages([]); }, [sessionId]);
+	useEffect(() => { setImages([]); submission.current = null; setSubmitting(false); }, [sessionId]);
 
 	const newSession = () => {
 		const start = () => send({ type: "new_session" });
@@ -144,6 +158,7 @@ export function App() {
 	}, []);
 
 	const useSuggestion = (text: string) => {
+		if (submission.current) return;
 		setDraft(text);
 		composer.current?.focus();
 	};
@@ -189,7 +204,7 @@ export function App() {
 					imagesSupported={imagesSupported}
 					mode={mode}
 					onModeChange={setModeOverride}
-					disabled={!connected}
+					disabled={!connected || submitting}
 					streaming={streaming}
 					onSubmit={submit}
 					onAbort={() => send({ type: "abort" })}

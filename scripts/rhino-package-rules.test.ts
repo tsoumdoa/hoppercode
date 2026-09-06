@@ -216,10 +216,10 @@ describe("Rhino package verifier", () => {
 	});
 
 	it("enforces the documented per-target size ceilings", () => {
-		expect(validateStagedSize("mac-arm64", 93 * 1024 * 1024)).toBeNull();
-		expect(validateStagedSize("mac-arm64", 93 * 1024 * 1024 + 1)).toContain("above");
-		expect(validateStagedSize("win-x64", 92 * 1024 * 1024)).toBeNull();
-		expect(validateStagedSize("win-x64", 92 * 1024 * 1024 + 1)).toContain("above");
+		expect(validateStagedSize("mac-arm64", 128 * 1024 * 1024)).toBeNull();
+		expect(validateStagedSize("mac-arm64", 128 * 1024 * 1024 + 1)).toContain("above");
+		expect(validateStagedSize("win-x64", 128 * 1024 * 1024)).toBeNull();
+		expect(validateStagedSize("win-x64", 128 * 1024 * 1024 + 1)).toContain("above");
 	});
 
 	it("writes a stable sorted manifest with sizes and SHA-256 hashes", async () => {

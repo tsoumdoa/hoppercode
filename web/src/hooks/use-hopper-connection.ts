@@ -6,6 +6,7 @@ import type { SendMode } from "../state/hopper-types";
 import { MockHopperTransport } from "../mocks/hopper-mock";
 
 export const isMockMode = import.meta.env.MODE === "mock";
+export type PromptReceipt = { onAccepted(): void; onRejected(): void };
 
 function readToken() {
 	const raw = window.location.hash.slice(1);
@@ -40,17 +41,31 @@ export function useHopperConnection() {
 	const reconnectTimer = useRef<number | null>(null);
 	const attempt = useRef(0);
 	const authenticated = useRef(false);
+	const pendingPrompts = useRef(new Map<string, PromptReceipt>());
+	const rejectPendingPrompts = useCallback(() => {
+		const pending = [...pendingPrompts.current.values()];
+		pendingPrompts.current.clear();
+		for (const receipt of pending) receipt.onRejected();
+	}, []);
 	const reconnectBlocked = useRef(false);
 	const token = useMemo(() => (isMockMode ? "mock-session" : readToken()), []);
 	const [reconnectNonce, setReconnectNonce] = useState(0);
 
 	const receive = useCallback((message: ServerMessage) => {
+		if ((message.type === "message_accepted" || message.type === "error") && message.requestId) {
+			const receipt = pendingPrompts.current.get(message.requestId);
+			pendingPrompts.current.delete(message.requestId);
+			if (message.type === "message_accepted") receipt?.onAccepted();
+			else receipt?.onRejected();
+		}
+		if (message.type === "message_accepted") return;
+		if (message.type === "session_replaced") rejectPendingPrompts();
 		if (message.type === "snapshot" || message.type === "session_replaced" || (message.type === "status" && CONNECTED_STATUSES.includes(message.status))) {
 			authenticated.current = true;
 			attempt.current = 0;
 		}
 		handleServerMessage(store, message);
-	}, [store]);
+	}, [store, rejectPendingPrompts]);
 
 	const send = useCallback((message: ClientMessage) => {
 		if (isMockMode && mockTransport.current) {
@@ -65,11 +80,13 @@ export function useHopperConnection() {
 			toast("Hopper is still authenticating.", "warning");
 			return false;
 		}
-		socket.current.send(JSON.stringify(message));
+		try { socket.current.send(JSON.stringify(message)); }
+		catch { toast("Could not send the message. Your draft is still available.", "error"); return false; }
 		return true;
 	}, [toast]);
 
 	const reconnect = useCallback(() => {
+		rejectPendingPrompts();
 		reconnectBlocked.current = false;
 		if (reconnectTimer.current) window.clearTimeout(reconnectTimer.current);
 		reconnectTimer.current = null;
@@ -81,7 +98,7 @@ export function useHopperConnection() {
 			socket.current = null;
 		}
 		setReconnectNonce((value) => value + 1);
-	}, []);
+	}, [rejectPendingPrompts]);
 
 	useEffect(() => {
 		if (isMockMode) {
@@ -121,6 +138,7 @@ export function useHopperConnection() {
 		});
 		current.addEventListener("close", (event) => {
 			if (socket.current !== current) return;
+			rejectPendingPrompts();
 			socket.current = null;
 			authenticated.current = false;
 			const reason = event.reason || "The local host closed the connection";
@@ -149,7 +167,7 @@ export function useHopperConnection() {
 			if (socket.current === current) socket.current = null;
 			current.close(1000, "Page updated");
 		};
-	}, [actions, receive, reconnectNonce, toast, token]);
+	}, [actions, receive, reconnectNonce, rejectPendingPrompts, toast, token]);
 
 	useEffect(() => {
 		const onOnline = () => {
@@ -160,8 +178,13 @@ export function useHopperConnection() {
 		return () => window.removeEventListener("online", onOnline);
 	}, [reconnect]);
 
-	const prompt = useCallback((text: string, type: SendMode, images?: ImageAttachment[]) => {
-		if (!send({ type, text, ...(images?.length ? { images } : {}) })) return false;
+	const prompt = useCallback((text: string, type: SendMode, images?: ImageAttachment[], receipt?: PromptReceipt) => {
+		const requestId = receipt ? crypto.randomUUID() : undefined;
+		if (receipt && requestId) pendingPrompts.current.set(requestId, receipt);
+		if (!send({ type, text, ...(images?.length ? { images } : {}), ...(requestId ? { requestId } : {}) })) {
+			if (requestId) pendingPrompts.current.delete(requestId);
+			return false;
+		}
 		actions.addUserMessage(text, type, images);
 		return true;
 	}, [actions, send]);

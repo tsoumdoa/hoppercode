@@ -162,3 +162,26 @@ it.each(["prompt", "steer", "followUp"] as const)("passes image content through 
 	await expect(host[method]("Inspect", [...images])).rejects.toThrow("supports images");
 	expect(session[method]).toHaveBeenCalledTimes(1);
 });
+
+it("acknowledges prompt preflight before generation completes and does not acknowledge failed preflight", async () => {
+	const { EmbeddedPiHost } = await import("./pi-runtime.js");
+	let finish!: () => void;
+	const generation = new Promise<void>((resolve) => { finish = resolve; });
+	let preflight!: (success: boolean) => void;
+	const session = {
+		model: { input: ["text", "image"] }, isStreaming: false,
+		getActiveToolNames: () => [], setActiveToolsByName: vi.fn(),
+		prompt: vi.fn(async (_text, options) => { preflight = options.preflightResult; await generation; }),
+	};
+	const skills = { refresh: async () => {}, expandCommand: (text: string) => text };
+	const host = Reflect.construct(EmbeddedPiHost, [{ session }, {}, {}, skills]) as import("./pi-runtime.js").EmbeddedPiHost;
+	const accepted = vi.fn();
+	const turn = host.prompt("Inspect", undefined, accepted);
+	await vi.waitFor(() => expect(session.prompt).toHaveBeenCalledOnce());
+	preflight(false);
+	expect(accepted).not.toHaveBeenCalled();
+	preflight(true);
+	expect(accepted).toHaveBeenCalledOnce();
+	finish();
+	await turn;
+});

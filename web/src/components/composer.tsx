@@ -42,14 +42,15 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 ) {
 	const fileInput = useRef<HTMLInputElement>(null);
 	const replaceId = useRef<string | null>(null);
-	const [editingId, setEditingId] = useState<string | null>(null);
+	const [editor, setEditor] = useState<{ kind: "new" } | { kind: "existing"; id: string } | null>(null);
 	const [loading, setLoading] = useState(false);
 	const [imageError, setImageError] = useState<string | null>(null);
 	const currentImages = useRef(images);
 	currentImages.current = images;
 	const loadGeneration = useRef(0);
 	useEffect(() => () => { loadGeneration.current++; }, []);
-	const editing = images.find((image) => image.id === editingId);
+	const editing = editor?.kind === "existing" ? images.find((image) => image.id === editor.id) : undefined;
+	const newDrawing = editor?.kind === "new";
 	const addImages = async (files: File[], replacement: string | null = null) => {
 		if (disabled || loading || !files.length) return;
 		setImageError(null);
@@ -105,14 +106,14 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 					onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ""; const replacement = replaceId.current; replaceId.current = null; void addImages(files, replacement); }} />
 				{images.length > 0 && <div className="flex flex-wrap gap-2 px-3 pt-3" aria-label="Image attachments">
 					{images.map((image) => <div key={image.id} className="w-36 overflow-hidden rounded-sm border border-line bg-panel">
-						<button type="button" className="block w-full" disabled={disabled || loading} onClick={() => setEditingId(image.id)} aria-label={`Annotate ${image.name}`}>
+						<button type="button" className="block w-full" disabled={disabled || loading} onClick={() => setEditor({ kind: "existing", id: image.id })} aria-label={`Annotate ${image.name}`}>
 							<img src={imageUrl(image.image)} alt={image.name} className="h-20 w-full object-contain" />
 						</button>
 						<p className="truncate px-1.5 pt-1 text-[11px] text-muted" title={image.name}>{image.name}</p>
 						<div className="flex items-center justify-between p-1">
-							<Button type="button" variant="ghost" size="icon-sm" disabled={disabled || loading} onClick={() => setEditingId(image.id)} aria-label={`Edit annotations on ${image.name}`} title="Annotate"><Pencil className="size-3.5" /></Button>
+							<Button type="button" variant="ghost" size="icon-sm" disabled={disabled || loading} onClick={() => setEditor({ kind: "existing", id: image.id })} aria-label={`Edit annotations on ${image.name}`} title="Annotate"><Pencil className="size-3.5" /></Button>
 							<Button type="button" variant="ghost" size="icon-sm" disabled={disabled || loading} onClick={() => { replaceId.current = image.id; if (fileInput.current) { fileInput.current.multiple = false; fileInput.current.click(); } }} aria-label={`Replace ${image.name}`} title="Replace image"><RefreshCw className="size-3.5" /></Button>
-							<Button type="button" variant="ghost" size="icon-sm" disabled={loading} onClick={() => onImagesChange(images.filter((item) => item.id !== image.id))} aria-label={`Remove ${image.name}`} title="Remove image"><X className="size-3.5" /></Button>
+							<Button type="button" variant="ghost" size="icon-sm" disabled={disabled || loading} onClick={() => onImagesChange(images.filter((item) => item.id !== image.id))} aria-label={`Remove ${image.name}`} title="Remove image"><X className="size-3.5" /></Button>
 						</div>
 					</div>)}
 				</div>}
@@ -135,6 +136,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 				/>
 				<div className="flex flex-wrap items-center gap-1 px-1.5 pb-1.5 pt-0.5">
 					<Button type="button" variant="ghost" size="icon-sm" disabled={disabled || loading || images.length >= MAX_IMAGES} aria-label="Attach images" title="Attach images, or paste a screenshot" onClick={() => { replaceId.current = null; if (fileInput.current) { fileInput.current.multiple = true; fileInput.current.click(); } }}><ImagePlus className="size-4" /></Button>
+					<Button type="button" variant="ghost" size="sm" disabled={disabled || loading || images.length >= MAX_IMAGES} aria-label="New drawing" title="Draw on a blank canvas" onClick={() => { setImageError(null); setEditor({ kind: "new" }); }}><Pencil className="size-3.5" />Draw</Button>
 					{controls}
 					{streaming && (
 						<Select value={mode} onValueChange={(value) => onModeChange(value as SendMode)}>
@@ -160,7 +162,13 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(function Compo
 					</Button>
 				</div>
 			</form>
-			{editing && <ImageAnnotationDialog attachment={editing} onClose={() => setEditingId(null)} onSave={(updated) => { onImagesChange(images.map((image) => image.id === updated.id ? updated : image)); setEditingId(null); }} />}
+			{(editing || newDrawing) && <ImageAnnotationDialog key={editing?.id ?? "new-drawing"} attachment={editing}
+				onClose={() => setEditor(null)}
+				onSave={(updated) => {
+					const latest = currentImages.current;
+					onImagesChange(newDrawing ? [...latest, updated] : latest.map((image) => image.id === updated.id ? updated : image));
+					setEditor(null);
+				}} />}
 		</footer>
 	);
 });

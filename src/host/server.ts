@@ -128,12 +128,13 @@ async function dispatch(
 	runtime: HostRuntime,
 	message: ClientMessage,
 	onShutdownRequest?: () => void,
+	onAccepted?: () => void,
 ): Promise<void> {
 	switch (message.type) {
 		case "authenticate": throw new Error("Socket is already authenticated");
-		case "prompt": return runtime.prompt(message.text, message.images);
-		case "steer": return runtime.steer(message.text, message.images);
-		case "follow_up": return runtime.followUp(message.text, message.images);
+		case "prompt": return runtime.prompt(message.text, message.images, onAccepted);
+		case "steer": await runtime.steer(message.text, message.images); onAccepted?.(); return;
+		case "follow_up": await runtime.followUp(message.text, message.images); onAccepted?.(); return;
 		case "abort": return runtime.abort();
 		case "new_session": return runtime.newSession();
 		case "set_model": return runtime.setModel(message.provider, message.id);
@@ -290,7 +291,11 @@ export async function startHopperServer(options: HopperServerOptions): Promise<H
 			try {
 				parsed = parseClientMessage(raw.toString());
 			} catch (error) {
-				send(socket, { type: "error", message: error instanceof Error ? error.message : String(error) });
+				// Validation failures still need to release the matching browser draft.
+				let requestId: string | undefined;
+				try { const value = JSON.parse(raw.toString()); if (typeof value?.requestId === "string") requestId = value.requestId; } catch { /* Invalid JSON has no request ID. */ }
+				send(socket, { type: "error", requestId, message: error instanceof Error ? error.message : String(error) });
+				if (authenticated && requestId) send(socket, { type: "snapshot", snapshot: options.runtime.snapshot() });
 				return;
 			}
 			if (!authenticated) {
@@ -301,10 +306,13 @@ export async function startHopperServer(options: HopperServerOptions): Promise<H
 				attachController();
 				return;
 			}
-			void dispatch(options.runtime, parsed, options.onShutdownRequest).catch((error) => {
+			const requestId = "requestId" in parsed && ["prompt", "steer", "follow_up"].includes(parsed.type) ? parsed.requestId : undefined;
+			const accepted = requestId ? () => send(socket, { type: "message_accepted", requestId }) : undefined;
+			void dispatch(options.runtime, parsed, options.onShutdownRequest, accepted).catch((error) => {
 				send(socket, {
 					type: "error",
 					requestType: parsed.type,
+					requestId,
 					message: error instanceof Error ? error.message : String(error),
 				});
 				if (["prompt", "steer", "follow_up"].includes(parsed.type)) {
