@@ -34,8 +34,9 @@ Add two discoverable tools, `rh_document` and `gh_document`, with the same actio
 | --- | --- | --- |
 | `list` | None | Open documents in the connected Rhino process, active handle, and host capabilities. Empty is valid. |
 | `get` | `documentId` | Current metadata for that exact live document. |
-| `new` | Explicit template path if needed; affected-document policy when replacing | Create and activate an unnamed document. Report any replacement. |
-| `open` | Absolute native-file `path`; affected-document policy when replacing | Open and activate, or activate an already-open matching file. Report `alreadyOpen`. |
+| `browse` | Absolute directory `path`, optional cursor | Return a bounded, nonrecursive list of subdirectories and native CAD files so the agent can discover paths. No document or GH startup required. |
+| `new` | `expectedActiveDocument`; explicit template path if needed; `affectedDocuments` when replacing | Create and activate an unnamed document. Report any replacement. |
+| `open` | Absolute native-file `path`, `expectedActiveDocument`, `affectedDocuments` when replacing | Open and activate, or activate an already-open matching file. Report `alreadyOpen`. |
 | `activate` | `documentId` | Activate that live document without opening another copy. |
 | `save` | `documentId`, `expectedStateToken` | Save to its existing path. An unnamed document returns `PATH_REQUIRED`; use `saveAs`. |
 | `saveAs` | `documentId`, `expectedStateToken`, absolute `path` | Save under the new path and make that path the document's current identity. |
@@ -45,6 +46,16 @@ Add two discoverable tools, `rh_document` and `gh_document`, with the same actio
 
 The state token changes when the host observes relevant document edits, path changes, or lifecycle changes. It is an optimistic concurrency check, not a content hash. Validate it and the target handle on the UI thread immediately before the operation. For actions that depend on the active document, also require the observed active handle or explicit null. Reject a changed target instead of affecting the newly active document.
 
+For open/new, `expectedActiveDocument` is a live handle or explicit null, and `affectedDocuments` is a list of `{documentId, expectedStateToken, onUnsaved, savePath?, overwrite?}`. Require an entry for every document the native action would replace or discard, including a currently clean document that could become dirty before execution. Reject missing or stale entries before replacement. A platform where the action adds a window without replacing anything accepts an empty list. A document created incidentally by lazy GH startup must not be discarded without checking that it is still empty and unchanged. `activate` also checks the observed active handle when the operation would change it.
+
+`browse` reports canonical absolute paths, file/directory kind, supported extension, and pagination without reading arbitrary file contents or recursing. Bound results and report unreadable entries. This is necessary because the embedded agent's existing `read` tool only reads skill-library Markdown; it has no general directory listing. Implement the filesystem query once in the backend and reuse it from both tools, independent of an active document or loaded GH adapter.
+
+### State-token coverage
+
+Maintain a monotonic observed-change revision for every managed live document, not only the active canvas. Define and test an event coverage table for Rhino object addition/deletion/replacement/attributes, layer/material/document tables, path and dirty-state changes, Undo/Redo, and GH component/port/wire/persistent-value changes while its solver is disabled. An edit to an already-dirty document must still advance the revision. Solver completion alone is not evidence of a persisted edit and must not continuously invalidate an unchanged definition.
+
+Reuse native monotonic change counters where the pinned SDK guarantees the required coverage, otherwise add owner-specific subscriptions and native-write scopes. Native spikes must prove the coverage before tokens are advertised as protecting discard operations. If an edit class lacks reliable notifications, use a verified persistent-state fingerprint at observation and destructive execution, or return `STATE_VALIDATION_UNAVAILABLE` for destructive requests on that target. Do not silently downgrade to the dirty boolean or claim that the existing monitors cover all edits. Subscribe/unsubscribe on inventory add/remove and invalidate handles before disposing native objects.
+
 Capabilities describe native multi-document behavior, supported file types, and any unavailable action. `list` on an unloaded GH adapter returns capability state without launching GH; mutating GH actions may use existing lazy startup. `get` of a stale handle does not launch another session.
 
 ## Paths, overwrites, and unsaved changes
@@ -52,11 +63,16 @@ Capabilities describe native multi-document behavior, supported file types, and 
 - Paths belong to the machine running Rhino. Require absolute paths and supported extensions. Validate files/directories in the backend, where the write occurs. Do not depend on the Node working directory.
 - Default `createDirectories` and `overwrite` to false. They can be explicitly enabled when the request authorizes them. Use normalized/canonical path comparison with the platform's actual case and symlink behavior, not unconditional lowercasing.
 - `save` may update its own existing file. `saveAs` to a different existing file requires `overwrite: true`; to its own path, use save semantics. Check for external file changes since the last observed save/open and return `FILE_CHANGED_EXTERNALLY` unless an explicit overwrite policy covers them.
+- Before SaveAs, compare its canonical destination against all live documents of that kind. If another document owns it, return `DESTINATION_OPEN_IN_OTHER_DOCUMENT` even with `overwrite: true`. Resolve that document separately first; SaveAs cannot silently retarget two live documents to one file.
 - `onUnsaved` is `fail`, `save`, or `discard`, defaulting to `fail`. `save` may include a `savePath` for an unnamed affected document and its overwrite options. A failed save must stop the close/replacement. `discard` must originate from the user's existing instruction or a specific answer about losing those changes.
 - Open/new must report and handle any document they will replace. Do not silently save a dirty document as a side effect of an SDK convenience method.
 - Reuse authorization already present in the conversation. Saving to a requested path does not need another approval. Ask only when a missing destination, ambiguous target, or unresolved loss of unsaved work prevents execution.
 - No modal save/open/overwrite dialogs in the ordinary path. A locked file, missing plugin prompt, or other native interaction that cannot be suppressed must produce a specific limitation instead of a claimed success.
 - Return structured domain errors such as `DOCUMENT_NOT_FOUND`, `DOCUMENT_CHANGED`, `PATH_REQUIRED`, `PATH_NOT_FOUND`, `UNSUPPORTED_EXTENSION`, `DESTINATION_EXISTS`, `UNSAVED_CHANGES`, `FILE_CHANGED_EXTERNALLY`, `FILE_LOCKED`, `HOST_BUSY`, and `UNSUPPORTED_ON_PLATFORM`. Preserve useful native error text.
+
+For external-file checks, retain the last verified file identity/size/mtime and a content digest when needed to distinguish an unchanged file from replacement. Revalidate just before native writing and use native locking/backup support. External-writer exclusion depends on filesystem and native-writer guarantees; a separate stat check is not an atomic compare-and-swap. Document this limit and test replacement races instead of claiming overwrite races are impossible.
+
+Return operation stage outcomes and per-document/file side effects, not only a success boolean. A save may succeed before a later close/open fails, and failure to refresh metadata does not mean no file was written. Include whether the pre-save completed, which documents remain open, known resulting paths, and whether any outcome is uncertain. Preserve successful earlier effects; do not replay the whole compound action to retry its failed final step.
 
 ## Native implementation
 
@@ -80,7 +96,7 @@ Rhino and GH documents are independent targets. Closing a Rhino model must not i
 
 ## Routing, ordering, and undo
 
-1. Add separate read and mutation RPC operations for each owner, for example `listRhinoDocuments`, `getRhinoDocument`, `manageRhinoDocument`, and GH equivalents. List/get are queries; all lifecycle and write actions are retained mutations with operation IDs.
+1. Add separate read and mutation RPC operations for each owner, for example `listRhinoDocuments`, `getRhinoDocument`, `manageRhinoDocument`, and GH equivalents. List/get are queries; all lifecycle and write actions are retained mutations with operation IDs. Add shared `browseDocumentFiles` as a Core-routed filesystem query with no native document requirement or GH startup.
 2. Extend operation metadata with active-document requirements and undo behavior. Separate `requires adapter loaded` from `requires active document`. Open/new/list must work with zero documents. Save/get/close resolve the requested handle rather than relying on whichever document is active. Handle the unloaded-GH `list` response through Core capability status before adapter dispatch, and exempt that query from Node's automatic GH startup. An empty list with an unavailable/not-loaded capability is different from a loaded adapter reporting zero documents.
 3. Update TypeScript and C# operation inventories, schema, metadata, fixtures, adapters, and the cross-language checks together. Retain protocol v2 envelopes; use additive operations with domain errors in result data. An older backend must return a clear unsupported capability.
 4. Treat every file mutation and activation as a document transition boundary. Finish any editing transactions that could be affected before the transition, retaining their Undo entry. Clear the corresponding Node transaction flags and lazily begin a new editing segment for later geometry/canvas edits. A failed transition also leaves the previous segment finished.
@@ -89,6 +105,18 @@ Rhino and GH documents are independent targets. Closing a Rhino model must not i
 7. Publish refreshed document state, invalidate document-scoped canvas/object caches as needed, and return authoritative post-operation state. Audit `guid-shortener`, canvas caches, and subscribers for assumptions about the old active document. Never reuse stale target IDs across documents.
 8. Use existing mutation result retention and lookup after a lost reply. Do not replay save/open/close after `outcome_unknown`. Same-operation-ID retries within the live result store must not repeat native work. Do not claim exactly-once execution across a host crash.
 9. Native file operations remain on the required UI thread. Cancellation before execution may prevent a mutation; once a native save/open has started, do not report that a client timeout canceled it. Large-file execution may continue and be reconciled through operation status.
+
+### Native transitions and transaction recovery
+
+The boundary must also cover native UI save/saveAs/open/close/activation/Undo/Redo and document changes triggered from Python/C# or other plugins. Existing document trackers publish state after events and do not provide this protection.
+
+- Add owner-specific before/after event hooks where Rhino 8 supports them. Before a native transition, finish the bound editing segment while its document is still valid. Distinguish events generated inside Hopper's managed transition from external events to avoid recursive/double completion.
+- If a pre-event is unavailable or the document already changed/disposed, invalidate the old segment and abandon its snapshot without applying it. Add an explicit abandon operation; GH `CancelActive()` is not suitable because it restores the old canvas. Preserve current native/user state and report loss of turn-level undo grouping when it cannot be retained safely. Apply the same rule to persistent user edits outside a managed mutation scope so later cancellation cannot erase them.
+- Track backend transaction ownership as `{documentId, segmentId, epoch, state}`. Every targeted edit validates its document and segment at execution. A queued mutation cannot inherit an owner-wide boolean from an earlier active document. Native transitions advance epochs, including transitions triggered without a document tool.
+- Replace Node's owner-only transaction booleans with observed segment metadata plus an `unknown` state. The authoritative backend returns current segment metadata in mutation results and a query supports reconciliation. Advisory events are hints, not the only recovery mechanism.
+- After a transition timeout/lost reply, mark the affected transaction ownership unknown and block dependent edits and snapshot rollback until result/segment reconciliation succeeds. Do not use `runTransactionControl`'s current swallowed exceptions as evidence that commit/cancel succeeded. If the lifecycle ended, discard stale local ownership and never issue cancellation against a new document under the old segment ID.
+- An RPC transition preflights target/policy/busy state, finishes the known segments, then runs native work under one dispatcher callback. Propagate boundary completion failures with side-effect metadata. If native callbacks reenter during the operation, validate owner/epoch again and reject further dependent work rather than assuming dispatcher ordering also excludes UI activity.
+- Native event ordering and close-last behavior are release gates. Where a platform cannot implement an action without closing the application or risking stale snapshot restoration, advertise that action as unsupported and leave the document intact. Do not label the full cross-platform lifecycle feature complete until those gaps are resolved.
 
 ## Implementation sequence
 
@@ -113,6 +141,12 @@ Likely new files: `src/tools/rh-document.ts`, `src/tools/gh-document.ts`, `src/s
 - Open the same file twice without duplicates. Close active and inactive documents, then close the final document and issue another open. Rhino stays running.
 - Save/open reply loss, queued cancellation, native failure, and uncertain outcome do not trigger a duplicate mutation or a fabricated rollback.
 - Existing GH graph tools, Rhino one-off scripts, lazy loading, and progressive discovery still work after document transitions.
+- Observe A, edit A again without changing the active handle, then attempt open B/new with the old discard token. Reject before saving, closing, or replacing A. Cover initially clean and already-dirty A.
+- SaveAs A to the path of active/inactive B and to a symlink/case alias of B. Reject regardless of the overwrite flag.
+- During an agent turn, manually save GH through the UI and then cancel the turn. Never restore the definition from before that save. Repeat with UI saveAs, document activation/close, Undo/Redo, external persistent edits, and lifecycle changes made inside a script.
+- Lose the transition reply after native completion, then attempt edit/cancel. Reconcile transaction epochs first; no old snapshot is applied to any document. Cover failure to commit and partial pre-save-success/close-failure results.
+- Modify inactive documents, already-dirty objects/layers, and GH wires/script source with its solver disabled. Verify state tokens change for persisted edits and do not churn for an unchanged repeated solution.
+- Browse a directory with mixed native files/subdirectories, Unicode paths, denied entries, and pagination with GH unloaded and no active model. No GH startup or file contents are needed.
 
 Run focused Vitest suites during implementation, then `pnpm test`, `pnpm build`, `pnpm test:rpc-cross-language`, `dotnet test dotnet/Hopper.Core.Tests/Hopper.Core.Tests.csproj`, `dotnet test grasshopper-plugin.Tests/grasshopper-plugin.Tests.csproj`, and `pnpm build:gh-plugin`. Native Rhino 8 smoke tests are additional requirements, not covered by fake executors.
 
@@ -131,3 +165,7 @@ The independent plan in branch `plan/rhino-virtual-scripts`, `docs/rhino-virtual
 - [GH_DocumentServer.SafeRemoveDocument](https://developer.rhino3d.com/api/grasshopper/html/M_Grasshopper_Kernel_GH_DocumentServer_SafeRemoveDocument.htm) documents UI prompts on unsaved data; it is not automatically an unattended close solution.
 
 Online GH API pages currently describe newer builds. Verify every selected method against the pinned Rhino 8 assemblies. No native smoke test was performed while writing this plan.
+
+## Adversarial review disposition
+
+The 2026-09-06 subagent review found missing affected-document revision checks, external UI transaction boundaries, SaveAs live-document collisions, and event coverage for state tokens. The contract, recovery policy, and acceptance cases above now specify those requirements. Local review also added usable path discovery, explicit partial-effect results, and transaction-epoch reconciliation after reply loss. These are plan corrections, not verified runtime fixes. Native event ordering, state-token coverage, and platform lifecycle behavior remain implementation release gates.
