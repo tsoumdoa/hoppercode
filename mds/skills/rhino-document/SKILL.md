@@ -10,6 +10,7 @@ description: Rhino document and viewport workflow for geometry, layers, selectio
 | Outcome | Tool |
 |---------|------|
 | Open, create, activate, save, save as, close, or inspect units/tolerances | `rh_document` for .3dm; `gh_document` for .gh/.ghx |
+| Create, read, patch, restore, or inspect saved Python/C# source | `rh_script` |
 | Change Rhino geometry, layers, selection, blocks, materials, or directly commit current geometry | `rh_run_script` |
 | Change viewport, projection, camera, CPlane view, or zoom | `rh_view_control` |
 | Inspect pixels for visual QA | `rh_capture_view` when available |
@@ -32,6 +33,16 @@ When one request crosses Rhino and Grasshopper, use both tool families. Ask only
 - `csharp` — Rhino 8 RhinoCode script-editor body.
 
 Use `print()` in Python or `Console.WriteLine()` in C# for values the agent must read. Do not call `doc.Objects.GetObjectList()` without arguments in Rhino 8. Templates and supported alternatives → [rhino-script-boilerplate.md](../../reference/rhino-script-boilerplate.md).
+
+## Editable source workflow
+
+For reusable or lengthy Rhino scripts, discover `rh_script` with `hopper_search_tools` using "saved script" or "virtual edit". Create an asset once, read a numbered range, then patch only the affected lines with `expectedRevision`. Every patch uses the original revision's 1-based line numbers. `insert.afterLine: 0` inserts before line 1. Reading and editing source work while Rhino is offline.
+
+Before executing, call `rh_script` with `action: "getExecutionTarget"`. Use its document identity and settings to interpret distances and tolerances. A distance of 2 meters is 2000 model units when the model uses millimeters. Preserve `settingsRevision` in `expectedDocument` to reject an intervening units/tolerance change. Unsupported backends return an error; do not guess defaults.
+
+Execute explicitly through `rh_run_script.items` using `scriptId`, `revision`, and `expectedDocument`. Edits never run automatically. An intentionally new run can create additional geometry; scripts that update earlier output must target existing object IDs or tags. Undo changes Rhino geometry, while source revisions remain available. A runtime error can leave partial geometry changes.
+
+For an uncertain execution result, inspect `rh_script.getRun` and use `reconcileRun` to query the original host's retained result. Reconciliation never resubmits source. After a host restart, inspect geometry before considering another explicit run. Asset/mixed batches stop after failure or uncertainty; legacy inline-only batches continue after errors.
 
 ## View and visual QA
 

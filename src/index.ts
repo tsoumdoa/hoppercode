@@ -26,7 +26,6 @@ import { probeBackend } from "./infra/backend-status.js";
 import { registerBackendStatusUI } from "./ui/backend-status.js";
 import { registerToolSchemasUI } from "./ui/tool-schemas.js";
 import {
-	ALL_TOOLS,
 	HOPPER_REGISTERED_CATALOG,
 	RH_CAPTURE_VIEW_CATALOG_ENTRY,
 	type HopperToolCatalogEntry,
@@ -49,6 +48,22 @@ import {
 	rhinoRoutingGuidance,
 } from "./services/prompt-routing.js";
 
+import { RhinoScriptWorkspace } from "./services/rhino-script-workspace.js";
+import { RhinoScriptExecution } from "./services/rhino-script-execution.js";
+import {
+	createRhScriptTool,
+	type ScriptToolContext,
+} from "./tools/rh-script.js";
+import { createRhRunScriptTool } from "./tools/rh-run-script.js";
+
+export type HopperExtensionOptions = {
+	scriptWorkspaceDir?: string;
+	scriptWorkspaceQuotaBytes?: number;
+	sessionId?: () => string;
+};
+export function createHopperPiExtension(options: HopperExtensionOptions = {}) {
+	return (pi: ExtensionAPI) => registerHopperPiExtension(pi, options);
+}
 const PROGRESSIVE_TOOLS_FLAG = "hopper-progressive-tools";
 
 function isProgressiveToolsEnabled(pi: ExtensionAPI): boolean {
@@ -58,6 +73,48 @@ function isProgressiveToolsEnabled(pi: ExtensionAPI): boolean {
 }
 
 export default function hopperPiExtension(pi: ExtensionAPI) {
+	return registerHopperPiExtension(pi, {});
+}
+function registerHopperPiExtension(
+	pi: ExtensionAPI,
+	options: HopperExtensionOptions,
+) {
+	let scriptContext: ScriptToolContext | undefined;
+	const bindWorkspace = (directory: string, sessionId: string) => {
+		const workspace = new RhinoScriptWorkspace(
+			options.scriptWorkspaceDir ??
+				process.env.HOPPER_SCRIPT_WORKSPACE ??
+				directory,
+			options.scriptWorkspaceQuotaBytes ??
+				(process.env.HOPPER_SCRIPT_WORKSPACE_QUOTA_BYTES
+					? Number(process.env.HOPPER_SCRIPT_WORKSPACE_QUOTA_BYTES)
+					: undefined),
+		);
+		scriptContext = {
+			workspace,
+			execution: new RhinoScriptExecution(workspace),
+			sessionId,
+		};
+	};
+	const getScriptContext = () => {
+		if (!scriptContext) {
+			if (!options.sessionId)
+				throw new Error(
+					"Script workspace is not bound to a persistent session yet",
+				);
+			bindWorkspace(process.cwd(), options.sessionId());
+		}
+		return scriptContext!;
+	};
+	const registeredCatalog = HOPPER_REGISTERED_CATALOG.map((entry) => ({
+		...entry,
+		tool:
+			entry.tool.name === "rh_script"
+				? createRhScriptTool(getScriptContext)
+				: entry.tool.name === "rh_run_script"
+					? createRhRunScriptTool(getScriptContext)
+					: entry.tool,
+	}));
 	pi.registerFlag(PROGRESSIVE_TOOLS_FLAG, {
 		type: "boolean",
 		default: isProgressiveToolsEnvEnabled(),
@@ -68,11 +125,13 @@ export default function hopperPiExtension(pi: ExtensionAPI) {
 
 	// ── Register Grasshopper/Rhino tools + progressive loader ───────
 
-	for (const tool of ALL_TOOLS) {
-		pi.registerTool(withBackendGuard(tool));
+	for (const entry of registeredCatalog) {
+		pi.registerTool(
+			entry.requires === "backend" ? withBackendGuard(entry.tool) : entry.tool,
+		);
 	}
 
-	let catalog: readonly HopperToolCatalogEntry[] = HOPPER_REGISTERED_CATALOG;
+	let catalog: readonly HopperToolCatalogEntry[] = registeredCatalog;
 	const getCatalog = () => catalog;
 	const progressive = isProgressiveToolsEnabled(pi);
 
@@ -82,7 +141,7 @@ export default function hopperPiExtension(pi: ExtensionAPI) {
 	}
 
 	catalog = [
-		...HOPPER_REGISTERED_CATALOG,
+		...registeredCatalog,
 		{
 			tool: searchTool,
 			group: "interaction",
@@ -100,6 +159,8 @@ export default function hopperPiExtension(pi: ExtensionAPI) {
 	// ── Lifecycle: notify on load ──────────────────────────────────
 
 	pi.on("session_start", (event, ctx) => {
+		if (ctx.sessionManager)
+			bindWorkspace(ctx.cwd, ctx.sessionManager.getSessionId());
 		const progressive = isProgressiveToolsEnabled(pi);
 		if (progressive && shouldResetProgressiveTools(event.reason)) {
 			resetProgressiveActiveTools(pi, catalog);
@@ -125,13 +186,16 @@ export default function hopperPiExtension(pi: ExtensionAPI) {
 			await captureModel.maybeSwitchToMultimodalFallback(ctx);
 		}
 
-		const captureGuidance = wantsVisualCapture && !captureModel.isCaptureToolActive()
-			? rhinoCaptureUnavailableGuidance(ctx.model)
-			: "";
+		const captureGuidance =
+			wantsVisualCapture && !captureModel.isCaptureToolActive()
+				? rhinoCaptureUnavailableGuidance(ctx.model)
+				: "";
 		const guidance = [
 			rhinoRoutingGuidance(promptTargetsGrasshopper(prompt)),
 			captureGuidance,
-		].filter(Boolean).join(" ");
+		]
+			.filter(Boolean)
+			.join(" ");
 
 		// Keep per-request routing out of conversation history; otherwise every Rhino
 		// turn adds another hidden message that persists for the rest of the session.

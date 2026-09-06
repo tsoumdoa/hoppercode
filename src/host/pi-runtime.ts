@@ -13,7 +13,7 @@ import {
 	createAgentSessionRuntime,
 	createAgentSessionServices,
 } from "@earendil-works/pi-coding-agent";
-import hopperPiExtension from "../index.js";
+import hopperPiExtension, { createHopperPiExtension, type HopperExtensionOptions } from "../index.js";
 import hopperChoicesExtension from "../extensions/choices/index.js";
 import { serializeAgentEvent, toWireValue } from "./event-serializer.js";
 import { HostMessageBus } from "./message-bus.js";
@@ -47,7 +47,7 @@ export function providerAuthMethods(auth: {
 	];
 }
 
-export function isolatedResourceLoaderOptions(): NonNullable<CreateAgentSessionServicesOptions["resourceLoaderOptions"]> {
+export function isolatedResourceLoaderOptions(scriptOptions?: HopperExtensionOptions): NonNullable<CreateAgentSessionServicesOptions["resourceLoaderOptions"]> {
 	return {
 		noExtensions: true,
 		noSkills: true,
@@ -55,7 +55,7 @@ export function isolatedResourceLoaderOptions(): NonNullable<CreateAgentSessionS
 		noThemes: true,
 		noContextFiles: true,
 		extensionFactories: [
-			{ name: "hopper", factory: hopperPiExtension },
+			{ name: "hopper", factory: scriptOptions ? createHopperPiExtension(scriptOptions) : hopperPiExtension },
 			{ name: "hopper-choices", factory: hopperChoicesExtension },
 		],
 	};
@@ -111,7 +111,11 @@ export class EmbeddedPiHost {
 				cwd,
 				agentDir: paths.agentDir,
 				modelRuntime,
-				resourceLoaderOptions: isolatedResourceLoaderOptions(),
+				resourceLoaderOptions: isolatedResourceLoaderOptions({
+					scriptWorkspaceDir: paths.scriptWorkspaceDir ?? join(paths.dataDir, "workspaces", "default"),
+					scriptWorkspaceQuotaBytes: paths.scriptWorkspaceQuotaBytes,
+					sessionId: () => sessionManager.getSessionId(),
+				}),
 			});
 			// Keep skill discovery live without reloading extensions or changing active tools.
 			services.resourceLoader.getSkills = () => skills.getSkills();
