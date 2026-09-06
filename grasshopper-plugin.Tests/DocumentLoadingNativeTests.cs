@@ -48,7 +48,8 @@ public static class DocumentLoadingNativeTests
         var panel = new GH_Panel(); panel.CreateAttributes(); fixture.AddObject(panel, false);
         var archive = new GH_IO.Serialization.GH_Archive(); Assert.True(archive.AppendObject(fixture, "Definition"));
         var xml = XDocument.Parse(archive.Serialize_Xml());
-        xml.Descendants("item").First(item => (string?)item.Attribute("name") == "GUID").Value = Guid.NewGuid().ToString();
+        var missingId = Guid.NewGuid().ToString();
+        xml.Descendants("item").First(item => (string?)item.Attribute("name") == "GUID").Value = missingId;
         xml.Save(path);
         var count = Instances.DocumentServer.DocumentCount;
         var active = service.ActiveId;
@@ -57,7 +58,8 @@ public static class DocumentLoadingNativeTests
             foreach (var action in new[] { "open", "new" }) {
                 var result = service.Execute(RpcOperation.manageGrasshopperDocument, Args(new { action, path, templatePath = path, expectedActiveDocument = active })).Data!.Value;
                 Assert.False(result.GetProperty("ok").GetBoolean(), result.ToString());
-                Assert.Contains(result.GetProperty("error").GetProperty("code").GetString(), new[] { "MISSING_COMPONENTS", "NATIVE_OPEN_FAILED" });
+                Assert.Equal("MISSING_COMPONENTS", result.GetProperty("error").GetProperty("code").GetString());
+                Assert.Contains(missingId, result.GetProperty("error").GetProperty("message").GetString());
                 Assert.Equal(count, Instances.DocumentServer.DocumentCount);
                 Assert.Equal(active, service.ActiveId);
                 Assert.Equal(setting, CentralSettings.TryDownloadMissingPlugins);
@@ -68,9 +70,26 @@ public static class DocumentLoadingNativeTests
     {
         var root = Path.Combine(Path.GetTempPath(), "hopper-valid-gh-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
+        var original = Instances.DocumentServer.Cast<GH_Document>().ToHashSet();
+        var active = Instances.ActiveCanvas?.Document;
+        // Keep the shared test target free of a Windows Forms reference.
+        var canvas = (object?)Instances.ActiveCanvas;
+        Exception? testFailure = null;
         try {
-            var method = typeof(DocumentManagementNativeTests).GetMethod("GrasshopperLifecycle", System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
-            method.Invoke(null, new object[] { root });
-        } finally { GrasshopperDocumentOperations.Instance.Dispose(); }
+            DocumentManagementNativeTests.GrasshopperLifecycle(root);
+        } catch (Exception error) { testFailure = error; throw;
+        } finally {
+            try {
+                canvas?.GetType().GetProperty("Document")?.SetValue(canvas, active);
+                foreach (var document in Instances.DocumentServer.Cast<GH_Document>().Where(doc => !original.Contains(doc)).ToArray()) {
+                    Instances.DocumentServer.RemoveDocument(document);
+                    document.Dispose();
+                }
+                Assert.True(original.SetEquals(Instances.DocumentServer.Cast<GH_Document>()));
+                Assert.Same(active, Instances.ActiveCanvas?.Document);
+            } catch (Exception cleanupError) when (testFailure != null) {
+                throw new AggregateException("Native test and cleanup both failed", testFailure, cleanupError);
+            } finally { GrasshopperDocumentOperations.Instance.Dispose(); }
+        }
     }
 }

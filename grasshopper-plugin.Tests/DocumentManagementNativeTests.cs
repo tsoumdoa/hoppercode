@@ -189,7 +189,7 @@ public static class DocumentManagementNativeTests
         }
     }
 
-    private static void GrasshopperLifecycle(string root)
+    internal static void GrasshopperLifecycle(string root)
     {
         var service = GrasshopperDocumentOperations.Instance;
         foreach (var extension in new[] { ".gh", ".ghx" })
