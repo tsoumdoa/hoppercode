@@ -78,6 +78,7 @@ public abstract class DocumentService<T> where T : class
         }
         if (doc != null && action != "activate") ValidateToken(doc, Required(args, "expectedStateToken"));
         var path = action is "open" or "saveAs" ? ValidatePath(Required(args, "path"), action == "open", CreateDirectories(args)) : null;
+        var templatePath = action == "new" && Optional(args, "templatePath") is { } template ? ValidatePath(template, true) : null;
         var already = action == "open" ? Documents.FirstOrDefault(d => DocumentFiles.Same(PathOf(d), path)) : null;
         var affected = new List<(T Document, JsonElement Policy)>();
         if (action is "new" or "open" && already == null && ReplacesActive && Active != null)
@@ -117,7 +118,7 @@ public abstract class DocumentService<T> where T : class
         }
         VerifyTransitionState();
         if (action is "new" or "open" or "activate") effects.Add(new(action, doc == null ? null : Id(doc), path, false));
-        if (action == "new") { doc = Create(Optional(args, "templatePath") is { } template ? ValidatePath(template, true) : null); Activate(doc); }
+        if (action == "new") { doc = Create(templatePath); Activate(doc); }
         else if (action == "open") { doc = already ?? Open(path!); Activate(doc); }
         else if (action == "activate") Activate(doc!);
         else if (action is "save" or "saveAs") Save(doc!, path ?? PathOf(doc!)!, args, effects);

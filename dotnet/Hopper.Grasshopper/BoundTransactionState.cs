@@ -16,7 +16,7 @@ namespace rhino_zmq_poc
         public bool IsActive => _document != null;
 
         public bool IsBoundTo(TDocument document) =>
-            ReferenceEquals(_document, document);
+            IsActive && ReferenceEquals(_document, document);
 
         public void Begin(TDocument document, TSnapshot snapshot)
         {

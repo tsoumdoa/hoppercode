@@ -46,6 +46,18 @@ internal sealed class GrasshopperDocumentOperations : DocumentService<GH_Documen
         var bytes = DocumentSnapshots.Serialize(doc) ?? throw new DocumentOperationException("STATE_VALIDATION_UNAVAILABLE", "Cannot serialize all persisted Grasshopper document state.");
         return Convert.ToHexString(SHA256.HashData(bytes));
     }
+    protected override string TransitionFingerprint(GH_Document doc)
+    {
+        var archive = new GH_IO.Serialization.GH_Archive();
+        if (!archive.AppendObject(doc, "Definition"))
+            throw new DocumentOperationException("STATE_VALIDATION_UNAVAILABLE", "Cannot serialize Grasshopper document content.");
+        // SaveAs updates the persisted filename here. Ignore only that derived
+        // metadata when detecting content changes made by callbacks during a save.
+        var properties = archive.GetRootNode.FindChunk("Definition")?.FindChunk("DefinitionProperties") as GH_IO.Serialization.GH_Chunk
+            ?? throw new DocumentOperationException("STATE_VALIDATION_UNAVAILABLE", "Grasshopper definition properties are unavailable.");
+        properties.RemoveItem("Name");
+        return Convert.ToHexString(SHA256.HashData(archive.Serialize_Binary()));
+    }
     protected override object Settings(GH_Document doc)
     {
         var active = DocumentSession.ActiveRhinoDocumentId?.Invoke();
@@ -62,6 +74,10 @@ internal sealed class GrasshopperDocumentOperations : DocumentService<GH_Documen
     public object? CurrentSettings => Active == null ? null : Settings(Active);
     protected override void FinishSegment()
     {
+        DocumentSession.EnsureRhinoDocumentReady?.Invoke();
+        if (Instances.ActiveCanvas == null) new Grasshopper.Plugin.GH_RhinoScriptInterface().LoadEditor();
+        if (Instances.ActiveCanvas == null)
+            throw new DocumentOperationException("CAPABILITY_UNAVAILABLE", "Grasshopper could not create an active canvas.");
         AgentTransaction.Reconcile();
         var result = AgentTransaction.CommitActive();
         if (result.Contains(" error:", StringComparison.OrdinalIgnoreCase)) throw new DocumentOperationException("TRANSACTION_COMPLETION_FAILED", result);
@@ -100,10 +116,12 @@ internal sealed class GrasshopperDocumentOperations : DocumentService<GH_Documen
     }
     protected override bool Write(GH_Document doc, string path)
     {
+        var before = TransitionFingerprint(doc);
         var io = new GH_DocumentIO { Document = doc };
         if (!io.SaveQuiet(path)) return false;
         doc.FilePath = path;
-        doc.IsModified = false;
+        try { doc.IsModified = before != TransitionFingerprint(doc); }
+        catch { doc.IsModified = true; throw; }
         return true;
     }
     protected override void Close(GH_Document doc)

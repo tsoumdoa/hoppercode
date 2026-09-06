@@ -7,6 +7,19 @@ namespace rhino_zmq_poc.Tests;
 public sealed class BoundTransactionStateTests
 {
     [Fact]
+    public void InactiveStateIsNeverBoundIncludingNullDocument()
+    {
+        var state = new BoundTransactionState<object, object>();
+        Assert.False(state.IsBoundTo(null!));
+        var document = new object();
+        state.Begin(document, new object());
+        Assert.True(state.IsBoundTo(document));
+        state.Complete((_, _) => true);
+        Assert.False(state.IsBoundTo(document));
+        Assert.False(state.IsBoundTo(null!));
+    }
+
+    [Fact]
     public void CleanupUsesStoredDocumentAndSnapshotThenClearsState()
     {
         var state = new BoundTransactionState<object, object>();

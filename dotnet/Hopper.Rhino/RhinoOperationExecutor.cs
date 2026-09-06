@@ -61,11 +61,15 @@ namespace rhino_zmq_poc
         public RhinoCaptureExecution CaptureView(RhinoCaptureArguments arguments) =>
             ViewportOperations.Capture(RhinoDoc.ActiveDoc, arguments);
 
-        public RhinoControlExecution ControlView(RhinoControlArguments arguments) =>
-            ViewportOperations.Control(RhinoDoc.ActiveDoc, arguments);
+        public RhinoControlExecution ControlView(RhinoControlArguments arguments)
+        {
+            _documents.EnsureDocumentReady();
+            return ViewportOperations.Control(RhinoDoc.ActiveDoc, arguments);
+        }
 
         public RhinoTransactionExecution BeginTransaction(string name)
         {
+            _documents.EnsureDocumentReady();
             var result = RhinoAgentTransaction.Begin(RhinoDoc.ActiveDoc, name);
             if (!result.Contains(" error:")) DocumentSession.Advance("rhino", _documents.ActiveId, "active");
             return Transaction(result);

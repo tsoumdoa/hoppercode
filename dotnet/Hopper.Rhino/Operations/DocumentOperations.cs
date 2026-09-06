@@ -14,13 +14,14 @@ internal sealed class RhinoDocumentOperations : DocumentService<RhinoDoc>, IDisp
     private static RhinoDocumentOperations? _instance;
     public static RhinoDocumentOperations Instance => _instance ??= new();
     private readonly List<Action> _unsubscribe = new();
-    public void Dispose() { foreach (var unsubscribe in _unsubscribe) unsubscribe(); _unsubscribe.Clear(); DocumentSession.ReadRhinoSettings = null; DocumentSession.ActiveRhinoDocumentId = null; _instance = null; }
+    public void Dispose() { foreach (var unsubscribe in _unsubscribe) unsubscribe(); _unsubscribe.Clear(); DocumentSession.ReadRhinoSettings = null; DocumentSession.ActiveRhinoDocumentId = null; DocumentSession.EnsureRhinoDocumentReady = null; MacDocumentWindows.Reset(); _instance = null; }
     private readonly Dictionary<uint, long> _revisions = new();
     private readonly Dictionary<uint, long> _contentRevisions = new();
     private int _managedDepth;
     private bool _managed => _managedDepth > 0;
     private RhinoDocumentOperations()
     {
+        DocumentSession.EnsureRhinoDocumentReady = EnsureDocumentReady;
         DocumentSession.ReadRhinoSettings = id => id == null ? (Active == null ? null : Settings(Active)) : Settings(Resolve(id));
         DocumentSession.ActiveRhinoDocumentId = () => Active == null ? null : Id(Active);
         EventHandler<Rhino.DocObjects.RhinoObjectEventArgs> AddRhinoObjectHandler = (_, e) => Touch(e.TheObject.Document);
@@ -86,7 +87,7 @@ internal sealed class RhinoDocumentOperations : DocumentService<RhinoDoc>, IDisp
         EventHandler<Rhino.DocumentOpenEventArgs> BeginOpenDocumentHandler = (_, _) => ExternalBoundary();
         RhinoDoc.BeginOpenDocument += BeginOpenDocumentHandler;
         _unsubscribe.Add(() => RhinoDoc.BeginOpenDocument -= BeginOpenDocumentHandler);
-        EventHandler<Rhino.DocumentEventArgs> CloseDocumentHandler = (_, _) => ExternalBoundary();
+        EventHandler<Rhino.DocumentEventArgs> CloseDocumentHandler = (_, e) => { MacDocumentWindows.Forget(e.Document.RuntimeSerialNumber); ExternalBoundary(); };
         RhinoDoc.CloseDocument += CloseDocumentHandler;
         _unsubscribe.Add(() => RhinoDoc.CloseDocument -= CloseDocumentHandler);
         EventHandler<Rhino.DocumentEventArgs> ActiveDocumentChangedHandler = (_, _) => ExternalBoundary();
@@ -115,8 +116,10 @@ internal sealed class RhinoDocumentOperations : DocumentService<RhinoDoc>, IDisp
     protected override string TransitionFingerprint(RhinoDoc doc) => _contentRevisions.GetValueOrDefault(doc.RuntimeSerialNumber) + "|" + SettingsRevision(doc);
     public object ReadSettings(string? id) => Settings(id == null ? Active ?? throw new DocumentOperationException("DOCUMENT_NOT_FOUND", "No active Rhino document.") : Resolve(id));
     public string? ActiveId => Active == null ? null : Id(Active);
+    public void EnsureDocumentReady() { if (OperatingSystem.IsMacOS()) MacDocumentWindows.EnsureSettled(); }
     public void ValidateExpected(ExpectedDocument? expected)
     {
+        EnsureDocumentReady();
         if (expected == null) return;
         if (expected.LifecycleInstanceId != DocumentSession.LifecycleInstanceId || expected.DocumentId != ActiveId)
             throw new DocumentOperationException("DOCUMENT_CHANGED", "The intended Rhino document is no longer active.");
@@ -151,6 +154,7 @@ internal sealed class RhinoDocumentOperations : DocumentService<RhinoDoc>, IDisp
     }
     protected override void FinishSegment()
     {
+        EnsureDocumentReady();
         if (RhinoApp.InCommand > 0) throw new DocumentOperationException("HOST_BUSY", "Rhino has an active command.");
         var result = RhinoAgentTransaction.CommitActive();
         if (result.Contains(" error:", StringComparison.OrdinalIgnoreCase)) throw new DocumentOperationException("TRANSACTION_COMPLETION_FAILED", result);
@@ -158,29 +162,31 @@ internal sealed class RhinoDocumentOperations : DocumentService<RhinoDoc>, IDisp
     }
     private T Managed<T>(Func<T> action) { _managedDepth++; try { return action(); } finally { _managedDepth--; } }
     protected override RhinoDoc Create(string? template) => Managed(() => {
+        if (OperatingSystem.IsMacOS()) return MacDocumentWindows.New(template);
         var previous = Active; var dirty = previous?.Modified ?? false;
         if (ReplacesActive && previous != null) previous.Modified = false;
         try { var created = RhinoDoc.Create(template) ?? throw new DocumentOperationException("NATIVE_OPEN_FAILED", "Rhino did not create a document."); if (created.Views.GetStandardRhinoViews().Length == 0) created.Views.DefaultViewLayout(); return created; }
         catch { if (previous != null && Documents.Contains(previous)) previous.Modified = dirty; throw; }
     });
     protected override RhinoDoc Open(string path) => Managed(() => {
+        if (OperatingSystem.IsMacOS()) return MacDocumentWindows.Open(path);
         var previous = Active; var dirty = previous?.Modified ?? false;
         if (ReplacesActive && previous != null) previous.Modified = false;
         try { return RhinoDoc.Open(path, out _) ?? throw new DocumentOperationException("NATIVE_OPEN_FAILED", "Rhino did not open the file."); }
         catch { if (previous != null && Documents.Contains(previous)) previous.Modified = dirty; throw; }
     });
-    protected override void Activate(RhinoDoc doc) => Managed(() => { RhinoDoc.ActiveDoc = doc; if (Active != doc) throw new DocumentOperationException("ACTIVATION_FAILED", "Rhino did not activate the requested document."); return true; });
+    protected override void Activate(RhinoDoc doc) => Managed(() => { if (OperatingSystem.IsMacOS()) MacDocumentWindows.Activate(doc); else RhinoDoc.ActiveDoc = doc; if (Active != doc) throw new DocumentOperationException("ACTIVATION_FAILED", "Rhino did not activate the requested document."); return true; });
     protected override bool Write(RhinoDoc doc, string path) => Managed(() => {
         using var options = new FileWriteOptions { UpdateDocumentPath = true, SuppressDialogBoxes = true, SuppressAllInput = true, WriteSelectedObjectsOnly = false, WriteUserData = true };
         return doc.WriteFile(path, options);
     });
     protected override void Close(RhinoDoc doc) => Managed(() => {
-        Activate(doc);
+        if (OperatingSystem.IsWindows()) Activate(doc);
         var dirty = doc.Modified;
         doc.Modified = false;
         try {
             if (OperatingSystem.IsWindows()) Create(null);
-            else if (!RhinoApp.RunScript(doc.RuntimeSerialNumber, "_-Close", "Hopper document management", false)) throw new DocumentOperationException("NATIVE_CLOSE_FAILED", "Rhino Close command failed.");
+            else MacDocumentWindows.Close(doc);
             if (Documents.Contains(doc)) throw new DocumentOperationException("NATIVE_CLOSE_FAILED", "Target document remains open.");
         } catch { if (Documents.Contains(doc)) doc.Modified = dirty; throw; }
         return true;

@@ -29,14 +29,22 @@ public static class DocumentManagementNativeTests
         var originalUnits = originalRhino?.ModelUnitSystem;
         var root = Path.Combine(Path.GetTempPath(), "hopper-document-native-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
+        Exception? testFailure = null;
         try
         {
+            File.AppendAllText(Path.Combine(root, "progress.log"), "Rhino lifecycle started\n");
             RhinoLifecycle(root);
+            if (originalRhino != null) MacDocumentWindows.Activate(originalRhino);
+            File.AppendAllText(Path.Combine(root, "progress.log"), "Grasshopper lifecycle started\n");
             GrasshopperLifecycle(root);
+            File.AppendAllText(Path.Combine(root, "progress.log"), "Grasshopper external save started\n");
             GrasshopperExternalSavePreservesCurrentState(root);
+            GrasshopperSaveCallbackRemainsDirty(root);
         }
+        catch (Exception error) { testFailure = error; }
         finally
         {
+            try {
             AgentTransaction.AbandonActive();
             RhinoAgentTransaction.CommitActive();
             var canvas = (object?)Instances.ActiveCanvas;
@@ -50,11 +58,9 @@ public static class DocumentManagementNativeTests
             {
                 doc.Modified = false;
                 RhinoDoc.ActiveDoc = doc;
-                RhinoApp.RunScript(doc.RuntimeSerialNumber, "_-Close", "Hopper disposable test cleanup", false);
+                MacDocumentWindows.Close(doc);
             }
-            if (originalRhino != null) RhinoDoc.ActiveDoc = originalRhino;
-            (RhinoDocumentOperations.Instance as object as IDisposable)?.Dispose();
-            (GrasshopperDocumentOperations.Instance as object as IDisposable)?.Dispose();
+            if (originalRhino != null) MacDocumentWindows.Activate(originalRhino);
             if (originalRhino != null)
             {
                 Assert.Equal(originalModified, originalRhino.Modified);
@@ -63,7 +69,13 @@ public static class DocumentManagementNativeTests
             }
             Assert.True(originalRhinoIds.SetEquals(RhinoDoc.OpenDocuments(false).Select(d => d.RuntimeSerialNumber)));
             Assert.True(originalGhIds.SetEquals(GhDocuments().Select(d => d.DocumentID)));
+            } catch (Exception cleanupError) { if (testFailure != null) throw new AggregateException("Native test and cleanup both failed", testFailure, cleanupError); throw; }
+            finally {
+                try { RhinoDocumentOperations.Instance.Dispose(); }
+                finally { GrasshopperDocumentOperations.Instance.Dispose(); }
+            }
         }
+        if (testFailure != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(testFailure).Throw();
     }
 
     private static void RhinoLifecycle(string root)
@@ -114,6 +126,15 @@ public static class DocumentManagementNativeTests
             expectedActiveDocument = service.ActiveId, affectedDocuments = Array.Empty<object>() });
         Assert.True(duplicate.GetProperty("alreadyOpen").GetBoolean());
         Assert.Equal(reopenedId, duplicate.GetProperty("document").GetProperty("documentId").GetString());
+        var templateCreated = Success(service, RpcOperation.manageRhinoDocument, new { action = "new", templatePath = path,
+            expectedActiveDocument = service.ActiveId, affectedDocuments = Array.Empty<object>() });
+        var templateId = templateCreated.GetProperty("document").GetProperty("documentId").GetString()!;
+        var fromTemplate = service.Resolve(templateId);
+        Assert.Null(service.Describe(fromTemplate).Path);
+        Assert.Equal(0.0025, fromTemplate.ModelAbsoluteTolerance);
+        Assert.NotNull(fromTemplate.Objects.FindId(pointId));
+        Success(service, RpcOperation.manageRhinoDocument, new { action = "close", documentId = templateId,
+            expectedStateToken = service.Describe(fromTemplate).StateToken, onUnsaved = "discard" });
         Success(service, RpcOperation.manageRhinoDocument, new { action = "close", documentId = reopenedId,
             expectedStateToken = service.Describe(reopened).StateToken, onUnsaved = "fail" });
     }
@@ -146,14 +167,23 @@ public static class DocumentManagementNativeTests
             Error(service, RpcOperation.manageGrasshopperDocument, new { action = "close", documentId = id,
                 expectedStateToken = first, onUnsaved = "discard" }, "DOCUMENT_CHANGED");
             var path = Path.Combine(root, "definition α" + extension);
-            Success(service, RpcOperation.manageGrasshopperDocument, new { action = "saveAs", documentId = id,
-                expectedStateToken = service.Describe(doc).StateToken, path });
+            void Snapshot(string suffix) {
+                var archive = new GH_IO.Serialization.GH_Archive();
+                archive.AppendObject(doc, "Definition");
+                File.WriteAllText(Path.Combine(root, "save-" + suffix + ".xml"), archive.Serialize_Xml());
+            }
+            Snapshot("before");
+            try { Success(service, RpcOperation.manageGrasshopperDocument, new { action = "saveAs", documentId = id,
+                expectedStateToken = service.Describe(doc).StateToken, path }); }
+            finally { Snapshot("after"); }
             Assert.True(File.Exists(path));
             Assert.False(doc.IsModified);
-            var second = Success(service, RpcOperation.manageGrasshopperDocument, new { action = "new",
+            var second = Success(service, RpcOperation.manageGrasshopperDocument, new { action = "new", templatePath = path,
                 expectedActiveDocument = service.ActiveId, affectedDocuments = Array.Empty<object>() });
             var secondId = second.GetProperty("document").GetProperty("documentId").GetString()!;
             var secondDoc = service.Resolve(secondId);
+            Assert.Null(service.Describe(secondDoc).Path);
+            Assert.Equal("updated while solver disabled", Assert.Single(secondDoc.Objects.OfType<GH_Panel>()).UserText);
             Error(service, RpcOperation.manageGrasshopperDocument, new { action = "saveAs", documentId = secondId,
                 expectedStateToken = service.Describe(secondDoc).StateToken, path, overwrite = true }, "DESTINATION_OPEN_IN_OTHER_DOCUMENT");
             Success(service, RpcOperation.manageGrasshopperDocument, new { action = "close", documentId = secondId,
@@ -196,6 +226,29 @@ public static class DocumentManagementNativeTests
 
     private static GH_Document[] GhDocuments() => Enumerable.Range(0, Instances.DocumentServer.DocumentCount)
         .Select(i => Instances.DocumentServer[i]).ToArray();
+    private static void GrasshopperSaveCallbackRemainsDirty(string root)
+    {
+        var service = GrasshopperDocumentOperations.Instance;
+        var created = Success(service, RpcOperation.manageGrasshopperDocument, new { action = "new",
+            expectedActiveDocument = service.ActiveId, affectedDocuments = Array.Empty<object>() });
+        var id = created.GetProperty("document").GetProperty("documentId").GetString()!;
+        var doc = service.Resolve(id);
+        var panel = new GH_Panel { UserText = "before save" };
+        panel.CreateAttributes();
+        doc.AddObject(panel, false);
+        doc.IsModified = true;
+        GH_Document.FilePathChangedEventHandler callback = (_, _) => { panel.UserText = "edited during save"; doc.IsModified = true; };
+        doc.FilePathChanged += callback;
+        var path = Path.Combine(root, "callback.gh");
+        try { Error(service, RpcOperation.manageGrasshopperDocument, new { action = "saveAs", documentId = id,
+            expectedStateToken = service.Describe(doc).StateToken, path }, "DOCUMENT_CHANGED"); }
+        finally { doc.FilePathChanged -= callback; }
+        Assert.True(File.Exists(path));
+        Assert.True(doc.IsModified);
+        Assert.Equal("edited during save", panel.UserText);
+        Success(service, RpcOperation.manageGrasshopperDocument, new { action = "close", documentId = id,
+            expectedStateToken = service.Describe(doc).StateToken, onUnsaved = "discard" });
+    }
     private static JsonElement Json(object value) => JsonSerializer.SerializeToElement(value, RpcV2Contract.JsonOptions);
     private static JsonElement Success<T>(DocumentService<T> service, RpcOperation operation, object args) where T : class
     {
