@@ -1,6 +1,6 @@
 import { createStore } from "zustand/vanilla";
 import { combine } from "zustand/middleware";
-import type { HostSnapshot } from "../../../src/host/protocol.js";
+import type { ImageAttachment, HostSnapshot } from "../../../src/host/protocol.js";
 import type { ConnectionStatus, SendMode } from "./hopper-types";
 import { createInitialHopperState, initialAuth } from "./initial-state";
 import { createAuthActions } from "./auth-state";
@@ -31,12 +31,12 @@ export function createHopperStore() {
 				: settleMessages(state, false)),
 			setWorkingMessage: (text: string | null) => set({ workingMessage: text }),
 			setSessionTitle: (title: string) => set((state) => ({ session: { ...state.session, name: title } })),
-			addUserMessage: (text: string, kind: SendMode) => {
+			addUserMessage: (text: string, kind: SendMode, images?: ImageAttachment[]) => {
 				const id = identifier("user");
 				set((state) => ({ session: {
 					...state.session,
 					isStreaming: kind === "prompt" ? true : state.session.isStreaming,
-					messages: [...state.session.messages, { id, role: "user", kind, text, thinking: "", streaming: false, tools: [] }],
+					messages: [...state.session.messages, { id, role: "user", kind, text, images, thinking: "", streaming: false, tools: [] }],
 				} }));
 			},
 		},

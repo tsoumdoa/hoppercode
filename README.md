@@ -10,6 +10,20 @@ AI inside their real workflow — not locked behind a black-box SaaS.
 
 ## What's new
 
+### Unreleased image attachments
+
+The browser composer accepts PNG, JPEG, WebP, and GIF files through the image button, drag and drop, or clipboard paste. Attach up to four images, each at most 5 MB. Use the thumbnail controls to replace or remove an attachment before sending.
+
+Click an image to annotate it with Excalidraw. Add arrows, shapes, text, or freehand marks, then choose **Save annotations**. You can reopen and edit the marks while the image is in your draft. Sending exports the drawing as a PNG for the selected vision model; the conversation retains that image after reconnecting. Draft images and editable drawing data are kept in memory and are cleared by a page reload or a new session.
+
+To sketch without an image, click **Draw** in the composer. This opens a blank Excalidraw canvas with the freehand tool selected. Choose **Save drawing** to attach it as a PNG; click its thumbnail to continue editing before sending. Drawings share the four-attachment limit with uploaded images.
+
+Use **Image opacity** below the editor to fade the source image from 100% to 0% while keeping your annotations visible. The setting is included in the saved PNG and restored when you reopen the draft's annotations.
+
+Oversized annotation exports are reduced in resolution to fit the 5 MB attachment limit. The editable drawing retains its original scene data. Draft text, images, and annotations stay in the composer until the host accepts the message; rejected or interrupted submissions remain available to retry.
+
+The editor loads on demand. Its fonts are included in the web build and served by the local host. Excalidraw adds about 13 MB of font assets plus its JavaScript bundles to the packaged UI.
+
 ### Unreleased — Direct viewport capture
 
 - **No screenshot permission prompt:** `rh_capture_view` can capture the Rhino viewport as soon as a multimodal model requests it. The per-session consent prompt and its environment override have been removed.

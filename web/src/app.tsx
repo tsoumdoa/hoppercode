@@ -15,6 +15,7 @@ import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { useHopperConnection } from "./hooks/use-hopper-connection";
 import { providerLabel } from "./lib/utils";
+import type { DraftImage } from "./lib/image-attachments";
 import type { SendMode } from "./state/hopper-types";
 
 const SIDEBAR_KEY = "hopper.sidebar.collapsed";
@@ -48,6 +49,11 @@ export function App() {
 	const connected = connection.status === "connected";
 
 	const [draft, setDraft] = useState("");
+	const [images, setImages] = useState<DraftImage[]>([]);
+	const [submitting, setSubmitting] = useState(false);
+	const submission = useRef<object | null>(null);
+	const selectedModel = useHopperStore((state) => state.selectedModel);
+	const imagesSupported = selectedModel?.input?.includes("image") !== false;
 	// Explicit delivery choice made while a turn runs; null means the default for the current state.
 	const [modeOverride, setModeOverride] = useState<SendMode | null>(null);
 	const [providerOpen, setProviderOpen] = useState(false);
@@ -88,10 +94,25 @@ export function App() {
 	}, [connected, sessionId]);
 
 	const submit = () => {
+		if (submission.current) return;
 		const text = draft.trim();
-		if (!text) return;
-		if (prompt(text, mode)) setDraft("");
+		if (!text && !images.length) return;
+		if (images.length && !imagesSupported) return;
+		const current = {};
+		submission.current = current;
+		setSubmitting(true);
+		const finish = (accepted: boolean) => {
+			if (submission.current !== current) return;
+			submission.current = null;
+			setSubmitting(false);
+			if (accepted) { setDraft(""); setImages([]); }
+		};
+		if (!prompt(text, mode, images.map((attachment) => attachment.image), {
+			onAccepted: () => finish(true), onRejected: () => finish(false),
+		})) finish(false);
 	};
+
+	useEffect(() => { setImages([]); submission.current = null; setSubmitting(false); }, [sessionId]);
 
 	const newSession = () => {
 		const start = () => send({ type: "new_session" });
@@ -137,6 +158,7 @@ export function App() {
 	}, []);
 
 	const useSuggestion = (text: string) => {
+		if (submission.current) return;
 		setDraft(text);
 		composer.current?.focus();
 	};
@@ -173,12 +195,16 @@ export function App() {
 				<ConnectionBanner connection={connection} onReconnect={reconnect} />
 				<Conversation connected={connected} onSuggestion={useSuggestion} />
 				<Composer
+					key={sessionId}
 					ref={composer}
 					draft={draft}
 					onDraftChange={setDraft}
+					images={images}
+					onImagesChange={setImages}
+					imagesSupported={imagesSupported}
 					mode={mode}
 					onModeChange={setModeOverride}
-					disabled={!connected}
+					disabled={!connected || submitting}
 					streaming={streaming}
 					onSubmit={submit}
 					onAbort={() => send({ type: "abort" })}

@@ -1,4 +1,4 @@
-import type { HostSnapshot } from "../../../src/host/protocol.js";
+import { parseImages, type HostSnapshot } from "../../../src/host/protocol.js";
 import type { ConversationMessage, HopperState, ToolCall } from "./hopper-types";
 import { identifier } from "./identifiers";
 import { textFromContent, thinkingFromContent, messageError } from "./conversation-state";
@@ -39,6 +39,9 @@ function toStoredMessages(messages: unknown, isStreaming = false): ConversationM
 			id: String(item.id ?? identifier("message")),
 			role: item.role,
 			text: textFromContent(item.content),
+			images: content.filter((part) => part.type === "image").flatMap((part) => {
+				try { return parseImages([part]) ?? []; } catch { return []; }
+			}),
 			thinking: thinkingFromContent(content),
 			error: item.role === "assistant" ? messageError(item) : undefined,
 			streaming: false,

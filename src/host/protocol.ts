@@ -65,14 +65,15 @@ export type HostSnapshot = {
 	sessionName?: string;
 	messages: JsonValue[];
 	isStreaming: boolean;
-	model?: { provider: string; id: string; name?: string };
+	model?: { provider: string; id: string; name?: string; input?: string[] };
 	thinkingLevel: string;
 	availableThinkingLevels: string[];
-	models: Array<{ provider: string; id: string; name?: string }>;
+	models: Array<{ provider: string; id: string; name?: string; input?: string[] }>;
 	providers: ProviderSummary[];
 };
 
 export type ServerMessage =
+	| { type: "message_accepted"; requestId: string }
 	| { type: "snapshot"; snapshot: HostSnapshot }
 	| { type: "agent_event"; event: JsonValue }
 	| UiRequestMessage
@@ -82,13 +83,30 @@ export type ServerMessage =
 	| { type: "auth_event"; event: JsonValue }
 	| { type: "status"; status: string; message?: string; scope?: string; provider?: string; streaming?: boolean }
 	| { type: "session_replaced"; session: HostSnapshot }
-	| { type: "error"; requestType?: string; message: string };
+	| { type: "error"; requestType?: string; requestId?: string; message: string };
+
+export type ImageAttachment = { type: "image"; data: string; mimeType: "image/png" | "image/jpeg" | "image/webp" | "image/gif" };
+export const MAX_IMAGES = 4;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_IMAGE_BASE64 = Math.ceil(MAX_IMAGE_BYTES / 3) * 4;
+
+export function parseImages(value: unknown): ImageAttachment[] | undefined {
+	if (value === undefined) return undefined;
+	if (!Array.isArray(value) || value.length > MAX_IMAGES) throw new Error(`Attach up to ${MAX_IMAGES} images`);
+	return value.map((image) => {
+		if (!isRecord(image) || image.type !== "image" || !["image/png", "image/jpeg", "image/webp", "image/gif"].includes(String(image.mimeType))) throw new Error("Use PNG, JPEG, WebP, or GIF images");
+		if (typeof image.data !== "string" || !image.data.length || image.data.length > MAX_IMAGE_BASE64 || image.data.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(image.data)) throw new Error("Image must be valid base64 and at most 5 MB");
+		const padding = image.data.endsWith("==") ? 2 : image.data.endsWith("=") ? 1 : 0;
+		if (image.data.length * 3 / 4 - padding > MAX_IMAGE_BYTES) throw new Error("Image must be at most 5 MB");
+		return { type: "image", data: image.data, mimeType: image.mimeType as ImageAttachment["mimeType"] };
+	});
+}
 
 export type ClientMessage =
 	| { type: "authenticate"; token: string }
-	| { type: "prompt"; text: string }
-	| { type: "steer"; text: string }
-	| { type: "follow_up"; text: string }
+	| { type: "prompt"; text: string; images?: ImageAttachment[]; requestId?: string }
+	| { type: "steer"; text: string; images?: ImageAttachment[]; requestId?: string }
+	| { type: "follow_up"; text: string; images?: ImageAttachment[]; requestId?: string }
 	| { type: "abort" }
 	| { type: "new_session" }
 	| { type: "set_model"; provider: string; id: string }
@@ -125,8 +143,12 @@ export function parseClientMessage(input: string): ClientMessage {
 			return { type: value.type, token: stringField(value, "token") };
 		case "prompt":
 		case "steer":
-		case "follow_up":
-			return { type: value.type, text: stringField(value, "text") };
+		case "follow_up": {
+			const images = parseImages(value.images);
+			const text = images?.length && typeof value.text === "string" ? value.text : stringField(value, "text");
+			const requestId = value.requestId === undefined ? undefined : stringField(value, "requestId");
+			return { type: value.type, text, ...(images?.length ? { images } : {}), ...(requestId ? { requestId } : {}) };
+		}
 		case "abort":
 		case "new_session":
 		case "snapshot":

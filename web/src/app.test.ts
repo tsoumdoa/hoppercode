@@ -7,13 +7,15 @@ import { createHopperStore } from "./state/hopper-store";
 import type { HopperStore } from "./state/hopper-types";
 import { HopperStoreProvider } from "./state/hopper-store-context";
 import { mockRuntimeStatus } from "./mocks/hopper-mock";
+import type { PromptReceipt } from "./hooks/use-hopper-connection";
+import type { DraftImage } from "./lib/image-attachments";
 
-const renders = vi.hoisted(() => ({ app: vi.fn(), sidebar: vi.fn(), models: vi.fn(), conversation: vi.fn() }));
+const renders = vi.hoisted(() => ({ app: vi.fn(), sidebar: vi.fn(), models: vi.fn(), conversation: vi.fn(), prompt: vi.fn<(...args: unknown[]) => boolean>(() => true) }));
 
 vi.mock("./hooks/use-hopper-connection", () => ({
 	useHopperConnection: () => {
 		renders.app();
-		return { token: "test", send: () => true, prompt: () => true, login: () => true, logout: () => true, reconnect: () => {}, isMockMode: false };
+		return { token: "test", send: () => true, prompt: renders.prompt, login: () => true, logout: () => true, reconnect: () => {}, isMockMode: false };
 	},
 }));
 // Drive polling results explicitly so each render assertion covers one update.
@@ -23,6 +25,18 @@ vi.mock("./components/sidebar", async (importOriginal) => {
 	return { ...actual, Sidebar: (props: Parameters<typeof actual.Sidebar>[0]) =>
 		createElement(Profiler, { id: "sidebar", onRender: renders.sidebar }, createElement(actual.Sidebar, props)) };
 });
+vi.mock("./lib/image-attachments", async (load) => ({
+	...await load<typeof import("./lib/image-attachments")>(),
+	readImage: async () => ({ id: "draft-image", name: "plan.png", width: 800, height: 500,
+		image: { type: "image", mimeType: "image/png", data: "bWFya2Vk" },
+		original: { type: "image", mimeType: "image/png", data: "cGxhbg==" },
+		scene: { elements: [], files: {}, appState: { currentItemStrokeColor: "red" } },
+	}),
+}));
+vi.mock("./components/image-annotation-dialog", () => ({
+	ImageAnnotationDialog: ({ attachment }: { attachment: DraftImage }) => createElement("div", { role: "dialog" },
+		attachment.scene?.appState.currentItemStrokeColor === "red" ? "Editable annotations restored" : "Missing annotations"),
+}));
 vi.mock("./components/model-picker", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("./components/model-picker")>();
 	return { ...actual, ModelControls: (props: Parameters<typeof actual.ModelControls>[0]) =>
@@ -84,4 +98,44 @@ it("shows notifications and queued input without rerendering the app or conversa
 	expect(renders.conversation).not.toHaveBeenCalled();
 	expect(renders.sidebar).not.toHaveBeenCalled();
 	expect(renders.models).not.toHaveBeenCalled();
+});
+
+async function submitAnnotatedDraft() {
+	const input = container.querySelector<HTMLInputElement>('input[type="file"]')!;
+	Object.defineProperty(input, "files", { value: [new File(["image"], "plan.png", { type: "image/png" })] });
+	await act(async () => { input.dispatchEvent(new Event("change", { bubbles: true })); });
+	await act(async () => {
+		const textarea = container.querySelector("textarea")!;
+		Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(textarea, "Inspect the marked area");
+		textarea.dispatchEvent(new Event("input", { bubbles: true }));
+	});
+	await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')!.click());
+	return renders.prompt.mock.calls.at(-1)![3] as PromptReceipt;
+}
+
+it("retains text and editable annotations after a rejected submission and snapshot", async () => {
+	const receipt = await submitAnnotatedDraft();
+	expect(container.querySelector("textarea")!.disabled).toBe(true);
+	expect(container.querySelector("img")!.src).toContain("bWFya2Vk");
+	await act(async () => {
+		receipt.onRejected();
+		store.getState().actions.applySnapshot({ sessionId: "session-1", messages: [], isStreaming: false,
+			thinkingLevel: "off", availableThinkingLevels: [], models: [], providers: [] });
+	});
+	expect(container.querySelector("textarea")!.value).toBe("Inspect the marked area");
+	expect(container.querySelector("textarea")!.disabled).toBe(false);
+	await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Annotate plan.png"]')!.click());
+	expect(container.textContent).toContain("Editable annotations restored");
+});
+
+it("clears a draft only after acceptance and ignores late receipts from previous submissions", async () => {
+	const first = await submitAnnotatedDraft();
+	await act(async () => first.onRejected());
+	await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Send message"]')!.click());
+	const second = renders.prompt.mock.calls.at(-1)![3] as PromptReceipt;
+	await act(async () => first.onAccepted());
+	expect(container.querySelector("img")).not.toBeNull();
+	await act(async () => second.onAccepted());
+	expect(container.querySelector("img")).toBeNull();
+	expect(container.querySelector("textarea")!.value).toBe("");
 });

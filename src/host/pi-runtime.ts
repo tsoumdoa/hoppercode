@@ -18,7 +18,7 @@ import hopperChoicesExtension from "../extensions/choices/index.js";
 import { serializeAgentEvent, toWireValue } from "./event-serializer.js";
 import { HostMessageBus } from "./message-bus.js";
 import type { HostPaths } from "./config.js";
-import type { HostSnapshot, SkillLibrarySnapshot, SkillLibraryUpdate } from "./protocol.js";
+import type { ImageAttachment, HostSnapshot, SkillLibrarySnapshot, SkillLibraryUpdate } from "./protocol.js";
 import { HostSkillLibrary } from "./skills.js";
 import { BrowserUiContext } from "./web-ui-context.js";
 
@@ -33,8 +33,8 @@ function defaultProjectRoot(): string {
 	return resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 }
 
-function modelSummary(model: { provider: string; id: string; name?: string }) {
-	return { provider: model.provider, id: model.id, name: model.name };
+function modelSummary(model: { provider: string; id: string; name?: string; input?: string[] }) {
+	return { provider: model.provider, id: model.id, name: model.name, input: model.input };
 }
 
 export function providerAuthMethods(auth: {
@@ -139,7 +139,7 @@ export class EmbeddedPiHost {
 		return host;
 	}
 
-	async prompt(text: string): Promise<void> {
+	async prompt(text: string, images?: ImageAttachment[], onAccepted?: () => void): Promise<void> {
 		this.assertUsable();
 		if (!this.runtime.session.model) throw new Error("No authenticated model is selected");
 		if (this.promptPending) throw new Error("Hopper is already processing a prompt");
@@ -149,7 +149,11 @@ export class EmbeddedPiHost {
 			await this.refreshSkills(true);
 			this.assertUsable();
 			if (generation !== this.promptGeneration) throw new Error("Prompt cancelled before it started");
-			await this.runtime.session.prompt(this.skills.expandCommand(text), { source: "rpc" });
+			this.assertImageSupport(images);
+			await this.runtime.session.prompt(this.skills.expandCommand(text), {
+				source: "rpc", images,
+				...(onAccepted ? { preflightResult: (success: boolean) => { if (success) onAccepted(); } } : {}),
+			});
 		} finally { this.promptPending = false; }
 	}
 
@@ -192,16 +196,24 @@ export class EmbeddedPiHost {
 		this.runtime.session.setActiveToolsByName(this.runtime.session.getActiveToolNames());
 	}
 
-	async steer(text: string): Promise<void> {
-		this.assertUsable();
-		while (this.skillUpdate) await this.skillUpdate;
-		await this.runtime.session.steer(this.skills.expandCommand(text));
+	private assertImageSupport(images?: ImageAttachment[]): void {
+		if (images?.length && !this.runtime.session.model?.input?.includes("image")) {
+			throw new Error("Select a model that supports images before sending attachments.");
+		}
 	}
 
-	async followUp(text: string): Promise<void> {
+	async steer(text: string, images?: ImageAttachment[]): Promise<void> {
 		this.assertUsable();
 		while (this.skillUpdate) await this.skillUpdate;
-		await this.runtime.session.followUp(this.skills.expandCommand(text));
+		this.assertImageSupport(images);
+		await this.runtime.session.steer(this.skills.expandCommand(text), images);
+	}
+
+	async followUp(text: string, images?: ImageAttachment[]): Promise<void> {
+		this.assertUsable();
+		while (this.skillUpdate) await this.skillUpdate;
+		this.assertImageSupport(images);
+		await this.runtime.session.followUp(this.skills.expandCommand(text), images);
 	}
 
 	async abort(): Promise<void> {

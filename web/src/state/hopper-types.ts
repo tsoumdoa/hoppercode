@@ -1,6 +1,6 @@
 import type { StoreApi, ExtractState } from "zustand/vanilla";
 import type { createHopperStore } from "./hopper-store";
-import type { ClientMessage, HostSnapshot, UiRequestMessage } from "../../../src/host/protocol.js";
+import type { ImageAttachment, ClientMessage, HostSnapshot, UiRequestMessage } from "../../../src/host/protocol.js";
 import type { RuntimeStatus } from "../../../src/protocol/v2.js";
 
 export type SendMode = Extract<ClientMessage, { text: string }>["type"];
@@ -21,6 +21,7 @@ export type ConversationMessage = {
 	/** How a user message was delivered. Only set for locally sent messages. */
 	kind?: SendMode;
 	text: string;
+	images?: ImageAttachment[];
 	thinking: string;
 	/** Provider or agent error reported for this assistant message. */
 	error?: string;

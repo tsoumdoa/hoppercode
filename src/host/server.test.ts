@@ -102,6 +102,49 @@ function nextMessage(socket: WebSocket): Promise<ServerMessage> {
 }
 
 describe("Hopper loopback server", () => {
+	it.each(["prompt", "steer", "follow_up"] as const)("acknowledges %s only when the runtime accepts it", async (type) => {
+		const runtime = fakeRuntime();
+		let accept!: () => void;
+		let finish!: () => void;
+		const pending = new Promise<void>((resolve) => { finish = resolve; });
+		if (type === "prompt") runtime.prompt = vi.fn(async (_text, _images, onAccepted) => { accept = onAccepted!; await pending; });
+		else runtime[type === "steer" ? "steer" : "followUp"] = vi.fn(() => pending);
+		const server = await startHopperServer({ runtime, staticDir: await staticDirectory(), token: "receipt", protocolHandshake, getRuntimeStatus });
+		servers.push(server);
+		const socket = await openSocket(server);
+		const initial = nextMessage(socket);
+		socket.send(JSON.stringify({ type: "authenticate", token: "receipt" }));
+		await initial;
+		const received: ServerMessage[] = [];
+		socket.on("message", (data) => received.push(JSON.parse(data.toString())));
+		socket.send(JSON.stringify({ type, text: "Inspect", requestId: "submission-1" }));
+		await vi.waitFor(() => expect(runtime[type === "follow_up" ? "followUp" : type]).toHaveBeenCalledOnce());
+		expect(received).toEqual([]);
+		const receipt = nextMessage(socket);
+		if (type === "prompt") accept(); else finish();
+		await expect(receipt).resolves.toEqual({ type: "message_accepted", requestId: "submission-1" });
+		finish();
+		socket.close();
+	});
+
+	it.each(["runtime", "validation"])("correlates %s rejection with the submitted draft", async (failure) => {
+		const runtime = fakeRuntime();
+		runtime.prompt = vi.fn(async () => { throw new Error("Authentication failed"); });
+		const server = await startHopperServer({ runtime, staticDir: await staticDirectory(), token: "receipt", protocolHandshake, getRuntimeStatus });
+		servers.push(server);
+		const socket = await openSocket(server);
+		const initial = nextMessage(socket);
+		socket.send(JSON.stringify({ type: "authenticate", token: "receipt" }));
+		await initial;
+		const rejection = nextMessage(socket);
+		const received: ServerMessage[] = [];
+		socket.on("message", (data) => received.push(JSON.parse(data.toString())));
+		socket.send(JSON.stringify({ type: "prompt", text: "Inspect", requestId: "rejected-draft", ...(failure === "validation" ? { images: [{}] } : {}) }));
+		await expect(rejection).resolves.toMatchObject({ type: "error", requestId: "rejected-draft" });
+		await vi.waitFor(() => expect(received).toContainEqual({ type: "snapshot", snapshot: snapshot() }));
+		socket.close();
+	});
+
 	it("restores the active thread and progress after closing and reopening the browser", async () => {
 		const runtime = fakeRuntime();
 		let current: HostSnapshot = {
@@ -298,11 +341,27 @@ describe("Hopper loopback server", () => {
 		socket.send(JSON.stringify({ type: "authenticate", token: server.token }));
 		await expect(initial).resolves.toEqual({ type: "snapshot", snapshot: snapshot() });
 		socket.send(JSON.stringify({ type: "prompt", text: "make a loft" }));
-		await vi.waitFor(() => expect(runtime.prompt).toHaveBeenCalledWith("make a loft"));
+		await vi.waitFor(() => expect(runtime.prompt).toHaveBeenCalledWith("make a loft", undefined, undefined));
 
 		const event = nextMessage(socket);
 		runtime.bus.publish({ type: "ui_notification", message: "online", level: "info" });
 		await expect(event).resolves.toEqual({ type: "ui_notification", message: "online", level: "info" });
+		socket.close();
+	});
+
+	it.each(["prompt", "steer", "follow_up"] as const)("delivers image-only %s messages larger than the old socket limit", async (type) => {
+		const runtime = fakeRuntime();
+		const server = await startHopperServer({ runtime, staticDir: await staticDirectory(), token: "image-test", protocolHandshake, getRuntimeStatus });
+		servers.push(server);
+		const socket = await openSocket(server);
+		const initial = nextMessage(socket);
+		socket.send(JSON.stringify({ type: "authenticate", token: server.token }));
+		await initial;
+		const images = [{ type: "image", mimeType: "image/png", data: Buffer.alloc(1024 * 1024).toString("base64") }];
+		socket.send(JSON.stringify({ type, text: "", images }));
+		const deliver = vi.mocked(runtime[type === "follow_up" ? "followUp" : type]);
+		await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce());
+		expect(deliver.mock.calls[0].slice(0, 2)).toEqual(["", images]);
 		socket.close();
 	});
 

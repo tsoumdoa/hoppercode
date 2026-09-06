@@ -83,7 +83,9 @@ function UserMessage({ message }: { message: ConversationMessage }) {
 		<article className="flex justify-end animate-slide-up" aria-label="Your message">
 			<div className="max-w-[min(85%,560px)]">
 				{kind && <p className="mb-1 text-right text-[11px] font-medium text-muted">{kind}</p>}
-				<div className="whitespace-pre-wrap break-words rounded-md bg-surface-muted px-3.5 py-2 text-[14px] leading-6 text-ink">{message.text}</div>
+				<div className="whitespace-pre-wrap break-words rounded-md bg-surface-muted px-3.5 py-2 text-[14px] leading-6 text-ink">{message.text}
+					{message.images?.map((image, index) => <a key={index} href={`data:${image.mimeType};base64,${image.data}`} download={`attachment-${index + 1}`} className="mt-2 block" title="Download image"><img src={`data:${image.mimeType};base64,${image.data}`} alt={`Attached image ${index + 1}`} className="max-h-72 rounded-sm object-contain" /></a>)}
+				</div>
 			</div>
 		</article>
 	);

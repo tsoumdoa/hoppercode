@@ -144,3 +144,44 @@ it("persists skill choices and the selected model across host restarts and new i
 		await rm(root, { recursive: true, force: true });
 	}
 });
+
+
+it.each(["prompt", "steer", "followUp"] as const)("passes image content through %s and rejects text-only models", async (method) => {
+	const { EmbeddedPiHost } = await import("./pi-runtime.js");
+	const session = {
+		model: { input: ["text", "image"] }, isStreaming: false,
+		getActiveToolNames: () => [], setActiveToolsByName: vi.fn(),
+		prompt: vi.fn(async () => {}), steer: vi.fn(async () => {}), followUp: vi.fn(async () => {}),
+	};
+	const skills = { refresh: async () => {}, expandCommand: (text: string) => text };
+	const host = Reflect.construct(EmbeddedPiHost, [{ session }, {}, {}, skills]) as import("./pi-runtime.js").EmbeddedPiHost;
+	const images = [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }] as const;
+	await host[method]("", [...images]);
+	expect(session[method]).toHaveBeenCalledWith("", method === "prompt" ? { source: "rpc", images } : images);
+	session.model.input = ["text"];
+	await expect(host[method]("Inspect", [...images])).rejects.toThrow("supports images");
+	expect(session[method]).toHaveBeenCalledTimes(1);
+});
+
+it("acknowledges prompt preflight before generation completes and does not acknowledge failed preflight", async () => {
+	const { EmbeddedPiHost } = await import("./pi-runtime.js");
+	let finish!: () => void;
+	const generation = new Promise<void>((resolve) => { finish = resolve; });
+	let preflight!: (success: boolean) => void;
+	const session = {
+		model: { input: ["text", "image"] }, isStreaming: false,
+		getActiveToolNames: () => [], setActiveToolsByName: vi.fn(),
+		prompt: vi.fn(async (_text, options) => { preflight = options.preflightResult; await generation; }),
+	};
+	const skills = { refresh: async () => {}, expandCommand: (text: string) => text };
+	const host = Reflect.construct(EmbeddedPiHost, [{ session }, {}, {}, skills]) as import("./pi-runtime.js").EmbeddedPiHost;
+	const accepted = vi.fn();
+	const turn = host.prompt("Inspect", undefined, accepted);
+	await vi.waitFor(() => expect(session.prompt).toHaveBeenCalledOnce());
+	preflight(false);
+	expect(accepted).not.toHaveBeenCalled();
+	preflight(true);
+	expect(accepted).toHaveBeenCalledOnce();
+	finish();
+	await turn;
+});

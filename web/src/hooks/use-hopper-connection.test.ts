@@ -152,3 +152,58 @@ describe("Hopper connection recovery", () => {
 		expect(store.getState().notifications.at(-1)?.message).toBe("Already streaming");
 	});
 });
+
+
+it.each(["prompt", "steer", "follow_up"] as const)("sends and displays images for %s", async (type) => {
+	const socket = TestSocket.instances[0];
+	const images = [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }] as const;
+	await act(async () => {
+		socket.open(); socket.message({ type: "status", status: "authenticated" });
+		expect(connection.prompt("", type, [...images])).toBe(true);
+	});
+	expect(JSON.parse(socket.send.mock.calls.at(-1)![0])).toEqual({ type, text: "", images });
+	expect(store.getState().session.messages.at(-1)).toMatchObject({ text: "", images, kind: type });
+});
+
+it("retains image messages when restoring a host snapshot", async () => {
+	const images = [{ type: "image", data: "aGVsbG8=", mimeType: "image/png" }] as const;
+	await act(async () => store.getState().actions.applySnapshot({
+		sessionId: "restored", messages: [{ role: "user", content: [...images] }], isStreaming: false,
+		thinkingLevel: "off", availableThinkingLevels: [], models: [], providers: [],
+	}));
+	expect(store.getState().session.messages[0]).toMatchObject({ text: "", images });
+});
+
+it("matches acceptance and rejection to the correct submission", async () => {
+	const socket = TestSocket.instances[0];
+	await act(async () => { socket.open(); socket.message({ type: "status", status: "authenticated" }); });
+	const first = { onAccepted: vi.fn(), onRejected: vi.fn() };
+	const second = { onAccepted: vi.fn(), onRejected: vi.fn() };
+	await act(async () => { connection.prompt("first", "prompt", [], first); });
+	const firstId = JSON.parse(socket.send.mock.calls.at(-1)![0]).requestId;
+	await act(async () => socket.message({ type: "message_accepted", requestId: firstId }));
+	expect(first.onAccepted).toHaveBeenCalledOnce();
+	await act(async () => { connection.prompt("second", "follow_up", [], second); });
+	const secondId = JSON.parse(socket.send.mock.calls.at(-1)![0]).requestId;
+	await act(async () => socket.message({ type: "error", requestType: "prompt", requestId: firstId, message: "Late failure" }));
+	expect(second.onRejected).not.toHaveBeenCalled();
+	await act(async () => socket.message({ type: "error", requestType: "follow_up", requestId: secondId, message: "Rejected" }));
+	expect(second.onRejected).toHaveBeenCalledOnce();
+	expect(first.onRejected).not.toHaveBeenCalled();
+});
+
+it.each(["disconnect", "reconnect", "session_replaced"])("releases an unacknowledged draft on %s", async (action) => {
+	const socket = TestSocket.instances[0];
+	await act(async () => { socket.open(); socket.message({ type: "status", status: "authenticated" }); });
+	const receipt = { onAccepted: vi.fn(), onRejected: vi.fn() };
+	await act(async () => { connection.prompt("draft", "prompt", [], receipt); });
+	await act(async () => {
+		if (action === "disconnect") socket.close(1006);
+		else if (action === "reconnect") connection.reconnect();
+		else socket.message({ type: "session_replaced", session: {
+			sessionId: "new", messages: [], isStreaming: false, thinkingLevel: "off", availableThinkingLevels: [], models: [], providers: [],
+		} });
+	});
+	expect(receipt.onRejected).toHaveBeenCalledOnce();
+	expect(receipt.onAccepted).not.toHaveBeenCalled();
+});

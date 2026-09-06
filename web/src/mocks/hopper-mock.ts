@@ -37,7 +37,7 @@ function snapshot(overrides: Partial<SnapshotMessage["snapshot"]> = {}): Snapsho
 			isStreaming: false,
 			thinkingLevel: "medium",
 			availableThinkingLevels: ["off", "low", "medium", "high"],
-			model: { provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
+			model: { input: ["text", "image"], provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
 			models: [
 				{ provider: "openai", id: "gpt-5.6", name: "GPT-5.6" },
 				{ provider: "anthropic", id: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
@@ -82,6 +82,9 @@ export class MockHopperTransport {
 	}
 
 	send(message: ClientMessage) {
+		if ((message.type === "prompt" || message.type === "steer" || message.type === "follow_up") && message.requestId) {
+			this.emit({ type: "message_accepted", requestId: message.requestId });
+		}
 		switch (message.type) {
 			case "authenticate": this.connect(); break;
 			case "prompt": this.runPrompt(String(message.text ?? "")); break;
@@ -95,7 +98,7 @@ export class MockHopperTransport {
 				this.cancelRun();
 				this.emit({ type: "session_replaced", session: this.currentSnapshot({ sessionId: "mock-session-new", sessionName: "New mock session", messages: [] }).snapshot });
 				break;
-			case "set_model": this.emit(this.currentSnapshot({ model: { provider: message.provider, id: message.id, name: message.id } })); break;
+			case "set_model": this.emit(this.currentSnapshot({ model: { input: ["text", "image"], provider: message.provider, id: message.id, name: message.id } })); break;
 			case "set_thinking": this.emit(this.currentSnapshot({ thinkingLevel: message.level })); break;
 			case "login":
 				this.emit({ type: "auth_event", event: message.authType === "oauth" ? { type: "auth_url", instructions: "Mock OAuth flow. No account will be opened.", url: "https://example.com/mock-auth" } : { type: "info", message: "Mock API key accepted." } });

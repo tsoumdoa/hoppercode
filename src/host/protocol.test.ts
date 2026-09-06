@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseClientMessage } from "./protocol.js";
+import { MAX_IMAGE_BYTES, parseClientMessage } from "./protocol.js";
 
 describe("browser protocol", () => {
 	it("parses supported messages", () => {
@@ -18,4 +18,19 @@ describe("browser protocol", () => {
 		expect(() => parseClientMessage('{"type":"prompt","text":""}')).toThrow("non-empty string");
 		expect(() => parseClientMessage('{"type":"wat"}')).toThrow("Unknown message type");
 	});
+});
+
+const image = { type: "image", data: "aGVsbG8=", mimeType: "image/png" };
+it.each(["prompt", "steer", "follow_up"])("accepts image-only %s messages and strips untrusted fields", (type) => {
+	expect(parseClientMessage(JSON.stringify({ type, text: "", images: [{ ...image, url: "https://example.com" }] }))).toEqual({ type, text: "", images: [image] });
+});
+it.each([
+	["unsupported format", [{ ...image, mimeType: "image/svg+xml" }]],
+	["invalid base64", [{ ...image, data: "not base64" }]],
+	["empty image", [{ ...image, data: "" }]],
+	["oversized image", [{ ...image, data: Buffer.alloc(MAX_IMAGE_BYTES + 1).toString("base64") }]],
+	["too many images", Array(5).fill(image)],
+	["invalid shape", "images"],
+])("rejects %s", (_label, images) => {
+	expect(() => parseClientMessage(JSON.stringify({ type: "prompt", text: "Inspect", images }))).toThrow();
 });
