@@ -238,8 +238,8 @@ export class RuntimeRpc {
 	async close(): Promise<void> {
 		this.noticeListeners.clear();
 		this.readiness.close();
-		await this.cancelAgentTurn();
-		await this.transport.close();
+		try { await this.cancelAgentTurn(); }
+		finally { await this.transport.close(); }
 	}
 
 	private publishNotice(notice: RuntimeRpcNotice): void {

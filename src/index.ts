@@ -186,16 +186,13 @@ function registerHopperPiExtension(
 			await captureModel.maybeSwitchToMultimodalFallback(ctx);
 		}
 
-		const captureGuidance =
-			wantsVisualCapture && !captureModel.isCaptureToolActive()
-				? rhinoCaptureUnavailableGuidance(ctx.model)
-				: "";
+		const captureGuidance = wantsVisualCapture && !captureModel.isCaptureToolActive()
+			? rhinoCaptureUnavailableGuidance(ctx.model)
+			: "";
 		const guidance = [
 			rhinoRoutingGuidance(promptTargetsGrasshopper(prompt)),
 			captureGuidance,
-		]
-			.filter(Boolean)
-			.join(" ");
+		].filter(Boolean).join(" ");
 
 		// Keep per-request routing out of conversation history; otherwise every Rhino
 		// turn adds another hidden message that persists for the rest of the session.

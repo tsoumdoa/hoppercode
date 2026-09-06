@@ -362,6 +362,20 @@ describe("RuntimeRpc", () => {
 		expect(transport.calls.filter((call) => call.operation === "manageRhinoDocument")).toHaveLength(1);
 	});
 
+	it("closes transport even when an uncertain mutation blocks cancellation", async () => {
+		const transport = new FakeTransport((operation) => operation === "manageRhinoDocument" ? {
+			source: "node", protocolVersion: 2, lifecycleInstanceId: LIFE, requestId: "req-save", operation, operationId: "save-1",
+			result: { class: "outcome_unknown", reasonCode: "COMPLETION_TIMEOUT", message: "Reply lost" },
+		} as NodeLocalOutcomeUnknown : response(operation, operation === "getOperationResult" ? { state: "pending" } : {}));
+		const closed = vi.spyOn(transport, "close");
+		const runtime = runtimeWith(transport, new FakeEvents());
+		await expect(runtime.invoke("manageRhinoDocument", { action: "save", documentId: "doc-a", expectedStateToken: "v1" })).rejects.toBeInstanceOf(RpcOutcomeUnknownError);
+		await expect(runtime.close()).rejects.toThrow("uncertain");
+		expect(closed).toHaveBeenCalledOnce();
+		expect(transport.calls.filter((call) => call.operation === "manageRhinoDocument")).toHaveLength(1);
+		expect(transport.calls.some((call) => call.operation === "cancelRhinoAgentTransaction")).toBe(false);
+	});
+
 	it("does not start Grasshopper when an unused turn is cancelled or closed", async () => {
 		const transport = new FakeTransport((operation) => response(
 			operation,
