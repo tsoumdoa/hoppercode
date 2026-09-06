@@ -7,6 +7,7 @@ export type AffectedDocument = {
 	onUnsaved: UnsavedPolicy;
 	savePath?: string;
 	overwrite?: boolean;
+	createDirectories?: boolean;
 };
 export type DocumentRequest = {
 	action: DocumentAction;
@@ -14,9 +15,11 @@ export type DocumentRequest = {
 	expectedStateToken?: string;
 	expectedActiveDocument?: string | null;
 	path?: string;
+	templatePath?: string;
 	onUnsaved?: UnsavedPolicy;
 	savePath?: string;
 	overwrite?: boolean;
+	createDirectories?: boolean;
 	affectedDocuments?: AffectedDocument[];
 	cursor?: string;
 	limit?: number;

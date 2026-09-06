@@ -237,6 +237,43 @@
         },
         "operationId": "op-manageGrasshopperDocument"
       }
+    },
+    {
+      "name": "new from explicit template",
+      "value": {
+        "protocolVersion": 2,
+        "lifecycleInstanceId": "life-01J7YQ5C5RP8D2VJ9F0A6M3N4B",
+        "requestId": "req-doc-option-0",
+        "token": "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "operation": "manageRhinoDocument",
+        "startDeadlineAt": 1730000030000,
+        "args": {
+          "action": "new",
+          "templatePath": "/templates/metric.3dm",
+          "expectedActiveDocument": null,
+          "affectedDocuments": []
+        },
+        "operationId": "op-doc-option-0"
+      }
+    },
+    {
+      "name": "save as with explicit parent creation",
+      "value": {
+        "protocolVersion": 2,
+        "lifecycleInstanceId": "life-01J7YQ5C5RP8D2VJ9F0A6M3N4B",
+        "requestId": "req-doc-option-1",
+        "token": "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+        "operation": "manageRhinoDocument",
+        "startDeadlineAt": 1730000030000,
+        "args": {
+          "action": "saveAs",
+          "documentId": "doc-fixture",
+          "expectedStateToken": "v1",
+          "path": "/new-directory/model.3dm",
+          "createDirectories": true
+        },
+        "operationId": "op-doc-option-1"
+      }
     }
   ],
   "invalidRequests": [

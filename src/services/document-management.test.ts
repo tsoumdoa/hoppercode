@@ -12,6 +12,14 @@ describe("document tools", () => {
 	it("preserves explicit null and revision checks on open", async () => {
 		expect(await manageDocument("rhino", { action: "open", path: "/Models/日本語 model.3dm", expectedActiveDocument: null, affectedDocuments: [] })).toMatchObject({ type: "manageRhinoDocument", expectedActiveDocument: null, affectedDocuments: [] });
 	});
+	it("forwards an explicit template and parent creation policies", async () => {
+		expect(await manageDocument("rhino", { action: "new", templatePath: "/Templates/metric.3dm", expectedActiveDocument: null, affectedDocuments: [] })).toMatchObject({ type: "manageRhinoDocument", templatePath: "/Templates/metric.3dm" });
+		expect(await manageDocument("grasshopper", { action: "saveAs", documentId: "gh-1", expectedStateToken: "v1", path: "/New/project.ghx", createDirectories: true })).toMatchObject({ createDirectories: true });
+		expect(await manageDocument("rhino", { action: "new", expectedActiveDocument: "rh-1", affectedDocuments: [{ documentId: "rh-1", expectedStateToken: "v1", onUnsaved: "save", savePath: "/New/model.3dm", createDirectories: true }] })).toMatchObject({ affectedDocuments: [{ createDirectories: true }] });
+		expect(() => validateDocumentRequest("rhino", { action: "new", templatePath: "relative.3dm", expectedActiveDocument: null, affectedDocuments: [] })).toThrow("absolute");
+		expect(() => validateDocumentRequest("rhino", { action: "new", templatePath: "/template.gh", expectedActiveDocument: null, affectedDocuments: [] })).toThrow("extension");
+	});
+
 	it("rejects missing observations before dispatch", () => {
 		expect(() => validateDocumentRequest("rhino", { action: "open", path: "/a.3dm", affectedDocuments: [] })).toThrow("expectedActiveDocument");
 		expect(() => validateDocumentRequest("rhino", { action: "new", expectedActiveDocument: null })).toThrow("affectedDocuments");

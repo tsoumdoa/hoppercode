@@ -24,8 +24,10 @@ export function validateDocumentRequest(kind: DocumentKind, request: DocumentReq
 		throw new Error("affectedDocuments is required; use [] when no documents will be replaced.");
 	if (["browse", "open", "saveAs"].includes(request.action)) required(request.path, "path");
 	if (request.action === "close" && !request.onUnsaved) throw new Error("onUnsaved is required for close.");
+	if (request.templatePath !== undefined && request.action !== "new") throw new Error("templatePath is only supported for new.");
+	if (request.action === "new" && request.path !== undefined) throw new Error("Use templatePath for new.");
 	if (request.onUnsaved && !policies.has(request.onUnsaved)) throw new Error("Invalid onUnsaved policy.");
-	for (const [field, path] of [["path", request.path], ["savePath", request.savePath]] as const) {
+	for (const [field, path] of [["path", request.path], ["savePath", request.savePath], ["templatePath", request.templatePath]] as const) {
 		if (path !== undefined) {
 			absolute(path, field);
 			if (!(field === "path" && request.action === "browse")) {
