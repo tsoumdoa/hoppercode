@@ -336,4 +336,30 @@ describe("durable execution admission", () => {
 		expect(result.runs[1].recordingError).toContain("ENOSPC");
 		expect(backend.run).toHaveBeenCalledTimes(1);
 	});
+	it("retains uncertainty when native execution's result was replaced by an oversized-result marker", async () => {
+		const { backend, execution, item } = setup();
+		const marker: OperationResultSnapshot = {
+			class: "failed",
+			reasonCode: "OPERATION_RESULT_TOO_LARGE",
+			message: "Terminal result exceeded transport limit",
+		};
+		vi.mocked(backend.run).mockResolvedValue(marker);
+		vi.mocked(backend.lookup).mockResolvedValue({
+			state: "terminal",
+			result: marker,
+		});
+		const result = await execution.runBatch([item, item], "oversized");
+		expect(result.runs.map((run) => run.state)).toEqual([
+			"outcome_unknown",
+			"notRun",
+		]);
+		expect(result.runs[0].result).toEqual(marker);
+		expect(result.runs[0].error).toContain("Inspect Rhino geometry");
+		const replay = await execution.runBatch([item, item], "oversized");
+		expect(replay.runs.map((run) => run.state)).toEqual([
+			"outcome_unknown",
+			"notRun",
+		]);
+		expect(backend.run).toHaveBeenCalledTimes(1);
+	});
 });

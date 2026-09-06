@@ -312,16 +312,18 @@ export class RhinoScriptExecution {
 			encodedSettings && Buffer.byteLength(encodedSettings) > 8000
 				? { preview: encodedSettings.slice(0, 1000), truncated: true }
 				: rawSettings;
+		const oversizedResult = result.reasonCode === "OPERATION_RESULT_TOO_LARGE";
 		return {
-			state:
-				[
-					"DOCUMENT_CHANGED",
-					"DOCUMENT_SETTINGS_CHANGED",
-					"SETTINGS_CHANGED",
-				].includes(result.reasonCode) ||
-				/^(DOCUMENT_CHANGED|DOCUMENT_SETTINGS_CHANGED|SETTINGS_CHANGED):/.test(
-					result.message ?? "",
-				)
+			state: oversizedResult
+				? "outcome_unknown"
+				: [
+							"DOCUMENT_CHANGED",
+							"DOCUMENT_SETTINGS_CHANGED",
+							"SETTINGS_CHANGED",
+					  ].includes(result.reasonCode) ||
+					  /^(DOCUMENT_CHANGED|DOCUMENT_SETTINGS_CHANGED|SETTINGS_CHANGED):/.test(
+							result.message ?? "",
+					  )
 					? "notStarted"
 					: result.class === "completed"
 						? data?.ok === false
@@ -342,7 +344,12 @@ export class RhinoScriptExecution {
 					: result,
 			output: output.slice(0, 6000),
 			outputTruncated: output.length > 6000,
-			error: error?.slice(0, 2000),
+			error: oversizedResult
+				? `OPERATION_RESULT_TOO_LARGE: Native execution returned an oversized result, so its actual outcome is unknown. Inspect Rhino geometry before considering another explicit run. ${error ?? ""}`.slice(
+						0,
+						2000,
+					)
+				: error?.slice(0, 2000),
 			settings,
 		};
 	}
