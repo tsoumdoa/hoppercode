@@ -104,6 +104,7 @@ export class RuntimeRpc {
 	private turnId = 0;
 	private readonly transactionOpen = { rhino: false, grasshopper: false };
 	private readonly segments: Partial<Record<TransactionOwner, DocumentTransactionState>> = {};
+	private readonly aliasDocuments: Partial<Record<TransactionOwner, string>> = {};
 	private readonly mutationQueue: Partial<Record<TransactionOwner, Promise<unknown>>> = {};
 	private readonly uncertainTransitions: Partial<Record<TransactionOwner, string>> = {};
 	private readonly transactionOpening: Partial<Record<TransactionOwner, Promise<void>>> = {};
@@ -382,10 +383,25 @@ export class RuntimeRpc {
 		if (candidate && typeof candidate === "object" && "segmentId" in candidate && "epoch" in candidate) {
 			const segment = candidate as DocumentTransactionState;
 			if (segment.lifecycleInstanceId !== this.lifecycleInstanceId) throw new Error("Transaction belongs to a stale host lifecycle.");
-			if (this.segments[owner]?.documentId !== segment.documentId) clearDocumentGuidAliases(owner);
+			// Idle segments have no document identity. Ending an undo record does not
+			// invalidate the aliases read from the same open document.
+			if (segment.documentId) this.observeAliasDocument(owner, segment.documentId);
 			this.segments[owner] = segment;
 			this.transactionOpen[owner] = segment.state === "active";
 		}
+		if (data && typeof data === "object" && "activeDocumentId" in data) {
+			if (typeof data.activeDocumentId === "string") this.observeAliasDocument(owner, data.activeDocumentId);
+			else if (data.activeDocumentId === null) {
+				clearDocumentGuidAliases(owner);
+				delete this.aliasDocuments[owner];
+			}
+		}
+	}
+
+	private observeAliasDocument(owner: TransactionOwner, documentId: string): void {
+		const previous = this.aliasDocuments[owner];
+		if (previous !== undefined && previous !== documentId) clearDocumentGuidAliases(owner);
+		this.aliasDocuments[owner] = documentId;
 	}
 
 	private async reconcileTransaction(owner: TransactionOwner): Promise<void> {

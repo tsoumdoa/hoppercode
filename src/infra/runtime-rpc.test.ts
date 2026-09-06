@@ -20,10 +20,66 @@ import {
 	type RuntimeRpcTransport,
 } from "./runtime-rpc.js";
 import { Requester } from "./requester.js";
+import { clearDocumentGuidAliases, resolveInstanceGuid, resolveRhinoGuid, toShortInstanceGuid, toShortRhinoGuid } from "../services/guid-shortener.js";
 
 const LIFE = "life-runtime-1";
 
 describe("RuntimeRpc", () => {
+	it.each(["rhino", "grasshopper"] as const)("retains %s aliases across editing segments and clears them for another document", async (owner) => {
+		clearDocumentGuidAliases(owner);
+		const shorten = owner === "rhino" ? toShortRhinoGuid : toShortInstanceGuid;
+		const resolve = owner === "rhino" ? resolveRhinoGuid : resolveInstanceGuid;
+		const begin = owner === "rhino" ? "beginRhinoAgentTransaction" : "beginAgentTransaction";
+		const commit = owner === "rhino" ? "commitRhinoAgentTransaction" : "commitAgentTransaction";
+		let activeDocument = "doc-a";
+		let segment = { documentId: null as string | null, segmentId: null as string | null, epoch: 0, state: "idle", lifecycleInstanceId: LIFE };
+		const transport = new FakeTransport((operation) => {
+			if (operation === "getRuntimeStatus") return response(operation, status("ready", true, 1));
+			if (operation === begin) segment = { documentId: activeDocument, segmentId: `segment-${segment.epoch + 1}`, epoch: segment.epoch + 1, state: "active", lifecycleInstanceId: LIFE };
+			if (operation === commit) segment = { documentId: null, segmentId: null, epoch: segment.epoch + 1, state: "idle", lifecycleInstanceId: LIFE };
+			return response(operation, operation === "getDocumentTransactionState" ? segment : { transaction: segment });
+		});
+		const runtime = runtimeWith(transport, new FakeEvents());
+		const full = "11111111-2222-3333-4444-555555555555";
+		const alias = shorten(full);
+		await runtime.invoke(begin, {});
+		expect(resolve(alias)).toBe(full);
+		await runtime.invoke(commit, {});
+		expect(resolve(alias)).toBe(full);
+		await runtime.invoke(begin, {});
+		expect(resolve(alias)).toBe(full);
+		await runtime.invoke(commit, {});
+		activeDocument = "doc-b";
+		await runtime.invoke(begin, {});
+		expect(resolve(alias)).toBe(alias);
+		await runtime.close();
+		clearDocumentGuidAliases(owner);
+	});
+
+	it.each(["rhino", "grasshopper"] as const)("invalidates %s aliases when inventory observes an active document change", async (owner) => {
+		clearDocumentGuidAliases(owner);
+		const shorten = owner === "rhino" ? toShortRhinoGuid : toShortInstanceGuid;
+		const resolve = owner === "rhino" ? resolveRhinoGuid : resolveInstanceGuid;
+		const list = owner === "rhino" ? "listRhinoDocuments" : "listGrasshopperDocuments";
+		let activeDocumentId: string | null = "doc-a";
+		const transport = new FakeTransport((operation) => response(operation, { activeDocumentId }));
+		const runtime = runtimeWith(transport, new FakeEvents());
+		await runtime.invoke(list, {});
+		const full = "11111111-2222-3333-4444-555555555555";
+		const alias = shorten(full);
+		await runtime.invoke(list, {});
+		expect(resolve(alias)).toBe(full);
+		activeDocumentId = "doc-b";
+		await runtime.invoke(list, {});
+		expect(resolve(alias)).toBe(alias);
+		shorten(full);
+		activeDocumentId = null;
+		await runtime.invoke(list, {});
+		expect(resolve(alias)).toBe(alias);
+		await runtime.close();
+		clearDocumentGuidAliases(owner);
+	});
+
 	it("tracks an empty turn without resolving a connection profile", async () => {
 		await resetRuntimeRpcForTests();
 
