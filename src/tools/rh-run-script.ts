@@ -66,9 +66,6 @@ export function createRhRunScriptTool(getContext?: () => ScriptToolContext) {
 								},
 								{ additionalProperties: false },
 							),
-							expectedSettingsRevision: Type.Optional(
-								Type.String({ minLength: 1 }),
-							),
 						},
 						{ additionalProperties: false },
 					),

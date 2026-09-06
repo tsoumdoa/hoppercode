@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { getRuntimeRpc, RpcOperationError } from "../infra/runtime-rpc.js";
 import type {
-	OperationName,
 	OperationResultSnapshot,
 	JsonObject,
 } from "../protocol/v2.js";
+import type { DocumentMetadata } from "../types/document-management.js";
 import type {
 	BatchRecord,
 	ExecutionDocument,
@@ -44,15 +44,10 @@ export function runtimeScriptBackend(): ScriptExecutionBackend {
 	return {
 		lifecycleInstanceId: rpc.lifecycleInstanceId,
 		async target() {
-			// The document management branch owns this shared RPC contract. Older hosts reject the query.
-			const res = await rpc.invoke("listRhinoDocuments" as OperationName, {});
+			const res = await rpc.invoke("listRhinoDocuments", {});
 			const data = res.result.data as unknown as {
 				activeDocumentId?: string;
-				documents?: Array<{
-					documentId: string;
-					lifecycleInstanceId: string;
-					settings?: { settingsRevision?: string };
-				}>;
+				documents?: DocumentMetadata[];
 			};
 			if (!Array.isArray(data?.documents))
 				fail(
@@ -76,40 +71,7 @@ export function runtimeScriptBackend(): ScriptExecutionBackend {
 			};
 		},
 		async run(item, expectedDocument, operationId, signal) {
-			if (expectedDocument) {
-				let target: Awaited<ReturnType<ScriptExecutionBackend["target"]>>;
-				try {
-					target = await this.target();
-				} catch (error) {
-					return {
-						class: "capability_unavailable",
-						reasonCode: "CAPABILITY_UNAVAILABLE",
-						message: `Document inspection failed before execution: ${String(error)}`,
-					};
-				}
-				if (
-					!target.document ||
-					target.document.documentId !== expectedDocument.documentId ||
-					target.document.lifecycleInstanceId !==
-						expectedDocument.lifecycleInstanceId
-				)
-					return {
-						class: "failed",
-						reasonCode: "OPERATION_FAILED",
-						message:
-							"DOCUMENT_CHANGED: Active document differs from the pinned execution target",
-					};
-				if (
-					expectedDocument.settingsRevision &&
-					target.document.settingsRevision !== expectedDocument.settingsRevision
-				)
-					return {
-						class: "failed",
-						reasonCode: "OPERATION_FAILED",
-						message:
-							"DOCUMENT_SETTINGS_CHANGED: Read current units/tolerances before running",
-					};
-			}
+			// The native UI thread checks the pinned document and settings immediately before execution.
 			const res = await rpc.invoke(
 				"runRhinoScript",
 				{
@@ -585,21 +547,6 @@ export class RhinoScriptExecution {
 					"INVALID_INPUT",
 					"Asset execution requires expectedDocument from getExecutionTarget",
 				);
-			if (
-				item.expectedSettingsRevision !== undefined &&
-				(typeof item.expectedSettingsRevision !== "string" ||
-					!item.expectedSettingsRevision)
-			)
-				fail(
-					"INVALID_INPUT",
-					"expectedSettingsRevision must be a nonempty string",
-				);
-			if (
-				doc.settingsRevision &&
-				item.expectedSettingsRevision &&
-				doc.settingsRevision !== item.expectedSettingsRevision
-			)
-				fail("INVALID_INPUT", "Conflicting settings revisions");
 			const r = this.workspace.resolve(item.scriptId, item.revision, true);
 			const validation = validateRhinoScriptItem({
 				mode: r.language,
@@ -612,12 +559,7 @@ export class RhinoScriptExecution {
 				sourceHash: r.hash,
 				mode: r.language,
 				source: r.source,
-				expectedDocument: {
-					...doc,
-					...(item.expectedSettingsRevision
-						? { settingsRevision: item.expectedSettingsRevision }
-						: {}),
-				},
+				expectedDocument: { ...doc },
 			};
 		}
 		if (

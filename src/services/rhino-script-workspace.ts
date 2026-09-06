@@ -307,14 +307,17 @@ export class RhinoScriptWorkspace {
 						truncated: true,
 					}
 				: undefined;
+		const completedLine =
+			selected.at(-1)?.line ??
+			(longLine?.nextCharacterOffset === null ? startLine : startLine - 1);
 		return {
 			...this.reference(scriptId, r),
 			lines: selected,
 			...(longLine ? { partialLine: longLine } : {}),
-			truncated: (selected.at(-1)?.line ?? 0) < requestedEnd,
+			truncated: completedLine < requestedEnd,
 			nextLine:
-				selected.length && selected.at(-1)!.line < requestedEnd
-					? selected.at(-1)!.line + 1
+				completedLine >= startLine && completedLine < requestedEnd
+					? completedLine + 1
 					: null,
 		};
 	}
@@ -358,7 +361,9 @@ export class RhinoScriptWorkspace {
 				.slice(offset, offset + limit)
 				.map(revisionSummary),
 			nextOffset:
-				offset + limit < record.revisions.length ? offset + limit : null,
+				offset + limit < Math.max(record.revisions.length, runIds.length)
+					? offset + limit
+					: null,
 			runIds: runIds.slice(offset, offset + limit),
 			totalRuns: runIds.length,
 		};

@@ -42,7 +42,6 @@ export type ScriptRunItem = {
 	scriptId: string;
 	revision: number;
 	expectedDocument: ExecutionDocument;
-	expectedSettingsRevision?: string;
 };
 export type InlineRunItem = {
 	mode: "python" | "csharp" | "command";

@@ -104,7 +104,10 @@ export function applySourcePatches(
 		}
 	for (const e of edits.sort((a, b) => b.start - a.start))
 		lines.splice(e.start, e.end - e.start, ...e.lines);
-	return lines.join("\n") + (source.endsWith("\n") && lines.length ? "\n" : "");
+	// A final empty logical line needs its own separator, even in unterminated source.
+	const finalNewline = lines.length > 0 &&
+		(source.endsWith("\n") || lines.at(-1) === "");
+	return lines.join("\n") + (finalNewline ? "\n" : "");
 }
 export function boundedDiff(before: string, after: string, maxChars = 12_000) {
 	const a = sourceLines(before),

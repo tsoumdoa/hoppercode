@@ -5,8 +5,10 @@ import { tmpdir } from "node:os";
 import { RhinoScriptWorkspace } from "./rhino-script-workspace.js";
 import {
 	RhinoScriptExecution,
+	runtimeScriptBackend,
 	type ScriptExecutionBackend,
 } from "./rhino-script-execution.js";
+import * as runtimeRpc from "../infra/runtime-rpc.js";
 import type { RunItem, RunRecord } from "../types/rhino-script-workspace.js";
 import type { OperationResultSnapshot } from "../protocol/v2.js";
 const dirs: string[] = [];
@@ -57,6 +59,41 @@ afterEach(() => {
 		rmSync(dir, { recursive: true, force: true });
 });
 describe("durable execution admission", () => {
+	it("paginates every execution when run history exceeds revision history", async () => {
+		const { w, execution, item } = setup();
+		const expectedRunIds: string[] = [];
+		for (let i = 0; i < 3; i++) {
+			const result = await execution.runBatch([item], `history-${i}`);
+			expectedRunIds.push(result.runs[0].runId);
+		}
+		const first = w.history(item.scriptId, 0, 2);
+		expect(first.total).toBe(1);
+		expect(first.totalRuns).toBe(3);
+		expect(first.nextOffset).toBe(2);
+		const second = w.history(item.scriptId, first.nextOffset!, 2);
+		expect(second.revisions).toEqual([]);
+		expect(second.nextOffset).toBeNull();
+		expect([...first.runIds, ...second.runIds].sort()).toEqual(
+			expectedRunIds.sort(),
+		);
+	});
+	it("passes document and settings preconditions directly to native execution", async () => {
+		const invoke = vi.fn().mockResolvedValue({ result: ok });
+		vi.spyOn(runtimeRpc, "getRuntimeRpc").mockReturnValue({
+			lifecycleInstanceId: "host",
+			invoke,
+		} as unknown as ReturnType<typeof runtimeRpc.getRuntimeRpc>);
+		const signal = new AbortController().signal;
+		const item = { mode: "python" as const, source: "print(1)" };
+		expect(
+			await runtimeScriptBackend().run(item, target, "operation", signal),
+		).toEqual(ok);
+		expect(invoke).toHaveBeenCalledExactlyOnceWith(
+			"runRhinoScript",
+			{ ...item, expectedDocument: target },
+			{ operationId: "operation", signal },
+		);
+	});
 	it("pins a revision, persists operation ID and settings, returns old batch after source deletion", async () => {
 		const { w, asset, backend, execution, item } = setup();
 		const result = await execution.runBatch([item], "session:call");

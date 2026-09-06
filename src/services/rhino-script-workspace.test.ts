@@ -25,6 +25,29 @@ afterEach(() => {
 		rmSync(dir, { recursive: true, force: true });
 });
 describe("original revision source patches", () => {
+	it.each(["", "abc", "abc\n"])(
+		"retains inserted trailing blank lines in %j",
+		(source) => {
+			const originalLines = sourceLines(source);
+			const edited = applySourcePatches(source, [
+				{ action: "insert", afterLine: originalLines.length, lines: ["", ""] },
+			]);
+			expect(sourceLines(edited)).toEqual([...originalLines, "", ""]);
+			expect(applySourcePatches(edited, [
+				{
+					action: "replace",
+					startLine: originalLines.length + 2,
+					endLine: originalLines.length + 2,
+					lines: ["last"],
+				},
+			])).toContain("\nlast\n");
+		},
+	);
+	it("preserves a final line replaced with an empty line", () => {
+		expect(sourceLines(applySourcePatches("abc", [
+			{ action: "replace", startLine: 1, endLine: 1, lines: [""] },
+		]))).toEqual([""]);
+	});
 	it("preserves Unicode, LF normalization, final newline and empty source semantics", () => {
 		expect(sourceLines("")).toEqual([]);
 		expect(sourceLines("a\n")).toEqual(["a"]);
@@ -77,6 +100,26 @@ describe("original revision source patches", () => {
 	});
 });
 describe("persistent source workspace", () => {
+	it("continues from a long partial line to the remaining source", () => {
+		const w = workspace();
+		const long = "x".repeat(17_000);
+		const r = create(w, `${long}\nprint(1)`);
+		const first = w.get(r.scriptId);
+		expect(first.partialLine?.nextCharacterOffset).toBe(16_000);
+		expect(first.nextLine).toBeNull();
+		const tail = w.get(
+			r.scriptId, 1, 1, undefined, first.partialLine!.nextCharacterOffset!,
+		);
+		expect(tail.partialLine?.nextCharacterOffset).toBeNull();
+		expect(tail.nextLine).toBe(2);
+		expect(tail.truncated).toBe(true);
+		expect(first.partialLine!.text + tail.partialLine!.text).toBe(long);
+		const remaining = w.get(r.scriptId, 1, tail.nextLine!);
+		expect(remaining.lines).toEqual([{ line: 2, text: "print(1)" }]);
+		expect(remaining.nextLine).toBeNull();
+		expect(remaining.truncated).toBe(false);
+		expect(w.get(r.scriptId, 1, 1, 1, 16_000).truncated).toBe(false);
+	});
 	it("creates, patches and reads a 100-line script by revision", () => {
 		const w = workspace(),
 			source =
