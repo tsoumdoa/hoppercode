@@ -67,16 +67,28 @@ export function isolatedResourceLoaderOptions(scriptOptions?: HopperExtensionOpt
 
 /** Pi snapshots tool definitions after compaction for each continuation. */
 export function bindToolPolicyModelBoundary(session: AgentSession, policy: ToolPolicyRuntime, promptSuffix = ""): () => Promise<void> {
+	type AgentMessage = AgentSession["agent"]["state"]["messages"][number];
+	const addPromptSuffix = <T extends { messages: AgentMessage[] }>(context: T): T => {
+		if (!promptSuffix || context.messages.some(message => message.role === "system" &&
+			(typeof message.content === "string" ? message.content : "").endsWith(promptSuffix))) return context;
+		return { ...context, messages: [...context.messages, { role: "system", content: promptSuffix, timestamp: Date.now() }] as AgentMessage[] };
+	};
 	const refresh = async () => {
 		await policy.reconcile(true);
-		if (promptSuffix && !session.agent.state.systemPrompt.endsWith(promptSuffix))
-			session.agent.state.systemPrompt += promptSuffix;
 	};
 	const prepare = session.agent.prepareNextTurnWithContext;
 	session.agent.prepareNextTurnWithContext = async (turn, signal) => {
 		const next = await prepare?.(turn, signal);
 		await refresh();
-		return { ...next, context: { ...(next?.context ?? turn.context), tools: session.agent.state.tools.slice(), systemPrompt: session.agent.state.systemPrompt } };
+		const context = addPromptSuffix(next?.context ?? turn.context);
+		return { ...next, context: { ...context, tools: session.agent.state.tools.slice() } };
+	};
+	const prepareRequest = session.agent.prepareRequest;
+	session.agent.prepareRequest = async (request, signal) => {
+		const next = await prepareRequest?.(request, signal);
+		await refresh();
+		const context = addPromptSuffix(next?.context ?? request.context);
+		return { ...next, context: { ...context, tools: session.agent.state.tools.slice() } };
 	};
 	return refresh;
 }

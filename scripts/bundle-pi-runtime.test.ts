@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { afterEach, expect, it } from "vitest";
-import { bundlePiRuntime, deferJitiImport, deferUndiciImport } from "./bundle-pi-runtime.mjs";
+import { bundlePiRuntime, deferUndiciImport } from "./bundle-pi-runtime.mjs";
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
@@ -15,7 +15,7 @@ async function fixture() {
 	roots.push(root);
 	const pkg = join(root, "@earendil-works/pi-coding-agent");
 	await mkdir(join(pkg, "dist/core"), { recursive: true });
-	await writeFile(join(pkg, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", type: "module", version: "0.85.1", exports: { ".": { import: "./dist/index.js" } } }));
+	await writeFile(join(pkg, "package.json"), JSON.stringify({ name: "@earendil-works/pi-coding-agent", type: "module", version: "0.87.1", exports: { ".": { import: "./dist/index.js" } } }));
 	await writeFile(join(pkg, "dist/index.js"), 'export { Session, originalUrl, workerUrl, readAsset } from "./core/session.js";');
 	await writeFile(join(pkg, "dist/core/session.js"), `
 		import { readFileSync } from "node:fs";
@@ -140,18 +140,6 @@ it("loads real Undici on demand and completes an HTTP request through its dispat
 	`], { encoding: "utf8", timeout: 10000, windowsHide: true });
 	expect(child.error).toBeUndefined();
 	expect(child.status, child.stderr).toBe(0);
-});
-
-it("rejects a changed extension loader before replacing the SDK", async () => {
-	const { root, pkg } = await fixture();
-	const source = await readFile(new URL("./core/extensions/loader.js", import.meta.resolve("@earendil-works/pi-coding-agent")), "utf8");
-	expect(() => deferJitiImport(source + "\n")).toThrow("Review changed Pi extension loader");
-	await mkdir(join(pkg, "dist/core/extensions"));
-	await writeFile(join(pkg, "dist/core/extensions/loader.js"), source + "\n");
-	const entry = 'export * from "./core/extensions/loader.js";';
-	await writeFile(join(pkg, "dist/index.js"), entry);
-	await expect(bundlePiRuntime(root)).rejects.toThrow("Review changed Pi extension loader");
-	expect(await readFile(join(pkg, "dist/index.js"), "utf8")).toBe(entry);
 });
 
 it("keeps Jiti unloaded for the SDK and inline factories, then loads real typed extensions on demand", async () => {

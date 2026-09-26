@@ -20,14 +20,6 @@ export function deferUndiciImport(source) {
 		.replace(/\bundici\./g, "loadUndici().");
 }
 
-// Hopper supplies compiled extension factories. Jiti/Babel is needed only when
-// Pi actually loads an extension file; the module loader is already async.
-export function deferJitiImport(source) {
-	if (createHash("sha256").update(source).digest("hex") !== "a1393de916487a2c47107ac7239f3139dcdb938705f88ba1ea5a954b3c8bb483")
-		throw new Error("Review changed Pi extension loader before deferring Jiti");
-	return source.replace('import { createJiti } from "jiti/static";\n', "")
-		.replace("    const jiti = createJiti(import.meta.url, {", '    const { createJiti } = await import("jiti/static");\n    const jiti = createJiti(import.meta.url, {');
-}
 function inside(root, path) {
 	const local = relative(root, path);
 	return local && local !== ".." && !local.startsWith("../") && !local.startsWith("..\\") && !isAbsolute(local);
@@ -43,7 +35,7 @@ export async function bundlePiRuntime(nodeModules) {
 	if (await realpath(directory) !== directory) throw new Error("Pi runtime bundling requires a staged package without links");
 	const manifest = JSON.parse(await readFile(join(directory, "package.json"), "utf8"));
 	if (manifest.name !== "@earendil-works/pi-coding-agent" || manifest.type !== "module" ||
-		manifest.version !== "0.85.1" || manifest.exports?.["."]?.import !== "./dist/index.js")
+		manifest.version !== "0.87.1" || manifest.exports?.["."]?.import !== "./dist/index.js")
 		throw new Error("Review Pi runtime bundling for this package version/layout");
 	const entry = join(directory, "dist/index.js");
 	const output = join(directory, "dist/hopper-runtime");
@@ -74,8 +66,6 @@ export async function bundlePiRuntime(nodeModules) {
 					let source = await readFile(path, "utf8");
 					if (relative(directory, path).replaceAll("\\", "/") === "dist/core/http-dispatcher.js")
 						source = deferUndiciImport(source);
-					if (relative(directory, path).replaceAll("\\", "/") === "dist/core/extensions/loader.js")
-						source = deferJitiImport(source);
 					if (!source.includes("import.meta.url")) return { contents: source, loader: "js" };
 					const original = relative(output, path).replaceAll("\\", "/");
 					const transformed = await transform(source, {

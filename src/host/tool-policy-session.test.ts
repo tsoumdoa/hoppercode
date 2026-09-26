@@ -161,8 +161,8 @@ describe("real Pi SDK tool policy integration without network", () => {
 		let started!: () => void;
 		const firstStarted = new Promise<void>(resolve => { started = resolve; });
 		let completeFirst!: () => void;
-		session.agent.streamFunction = (model, context) => {
-			requests.push((context.tools ?? []).map(tool => tool.name));
+		session.agent.streamFunction = (model) => {
+			requests.push(session.agent.state.tools.map(tool => tool.name));
 			const stream = createAssistantMessageEventStream();
 			const message: AssistantMessage = {
 				role: "assistant", api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(),

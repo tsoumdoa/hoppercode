@@ -235,7 +235,7 @@ describe("host skill library", () => {
 			expect(active).toContain("ask_user");
 			for (const name of ["bash", "edit", "write", "grep", "find", "ls"]) expect(active).not.toContain(name);
 			for (const name of ["rhino-document", "gh-modeling-expert", "gh-cookbook", "gh-reference"]) {
-				expect(session.agent.state.systemPrompt).toContain(`<name>${name}</name>`);
+				expect(session.systemPrompt).toContain(`<name>${name}</name>`);
 			}
 			const skill = library.snapshot().skills.find((entry) => entry.name === "rhino-document")!;
 			const read = session.agent.state.tools.find((tool) => tool.name === "read")!;
@@ -244,7 +244,7 @@ describe("host skill library", () => {
 			await expect(read.execute("test-outside", { path: join(root, "auth.json") })).rejects.toThrow("unavailable");
 			await library.update({ type: "toggle", id: skill.id, enabled: false });
 			session.setActiveToolsByName(active);
-			expect(session.agent.state.systemPrompt).not.toContain("<name>rhino-document</name>");
+			expect(session.systemPrompt).not.toContain("<name>rhino-document</name>");
 			await expect(read.execute("test-disabled", { path: skill.path })).rejects.toThrow("disabled");
 		} finally {
 			await policy.close();

@@ -20,10 +20,10 @@ export class QuestionSuspensionBoundary {
 	private stopping = false;
 	private installed = true;
 	private readonly previousBefore: PiAgent["beforeToolCall"];
-	private readonly previousStop: PiAgent["shouldStopAfterTurn"];
+	private readonly previousFinish: PiAgent["finishTurn"];
 	private readonly previousExecution: PiAgent["toolExecution"];
 	private readonly before: NonNullable<PiAgent["beforeToolCall"]>;
-	private readonly stop: NonNullable<PiAgent["shouldStopAfterTurn"]>;
+	private readonly finish: NonNullable<PiAgent["finishTurn"]>;
 
 	constructor(
 		private readonly agent: PiAgent,
@@ -31,16 +31,20 @@ export class QuestionSuspensionBoundary {
 	) {
 		if (agent.state.isStreaming) throw new Error("Install question suspension before starting Pi");
 		this.previousBefore = agent.beforeToolCall;
-		this.previousStop = agent.shouldStopAfterTurn;
+		this.previousFinish = agent.finishTurn;
 		this.previousExecution = agent.toolExecution;
 		this.before = async (context, signal) => {
-			if (this.stopping) return { block: true, reason: "Not executed: this turn is suspended for a user question." };
+			if (this.stopping) return { block: true, terminate: true, reason: "Not executed: this turn is suspended for a user question." };
 			return this.previousBefore?.(context, signal);
 		};
-		this.stop = async (context, signal) => this.stopping || (await this.previousStop?.(context, signal)) === true;
+		this.finish = async (turn, signal) => {
+			const decision = await this.previousFinish?.(turn, signal);
+			if (this.stopping || decision?.action === "end") return { action: "end" };
+			if (decision?.action === "continue") return decision;
+		};
 		agent.toolExecution = "sequential";
 		agent.beforeToolCall = this.before;
-		agent.shouldStopAfterTurn = this.stop;
+		agent.finishTurn = this.finish;
 	}
 
 	/** Called by the task's ask_user tool; persistence failure also stops dispatch. */
@@ -60,11 +64,11 @@ export class QuestionSuspensionBoundary {
 	dispose(): void {
 		if (!this.installed) return;
 		if (this.agent.state.isStreaming) throw new Error("Cannot remove question suspension while Pi is running");
-		if (this.agent.beforeToolCall !== this.before || this.agent.shouldStopAfterTurn !== this.stop) {
+		if (this.agent.beforeToolCall !== this.before || this.agent.finishTurn !== this.finish) {
 			throw new Error("Pi question suspension hooks were replaced");
 		}
 		this.agent.beforeToolCall = this.previousBefore;
-		this.agent.shouldStopAfterTurn = this.previousStop;
+		this.agent.finishTurn = this.previousFinish;
 		this.agent.toolExecution = this.previousExecution;
 		this.installed = false;
 	}

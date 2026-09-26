@@ -7,7 +7,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 // These ESM trees have no package-relative assets, workers or native loaders.
 export const DEPENDENCY_BUNDLES = Object.freeze([
 	{
-		name: "typebox", version: "1.3.7", directory: "build", extension: ".mjs",
+		name: "typebox", version: "1.3.27", directory: "build", extension: ".mjs",
 		entries: {
 			".": "index", "./schema": "schema/index", "./system": "system/index",
 			"./compile": "compile/index", "./value": "value/index", "./type": "type/index",
@@ -15,9 +15,10 @@ export const DEPENDENCY_BUNDLES = Object.freeze([
 		},
 	},
 	{
-		name: "@earendil-works/pi-agent-core", version: "0.85.1", directory: "dist", extension: ".js",
+		name: "@earendil-works/pi-agent-core", version: "0.87.1", directory: "dist", extension: ".js",
 		entries: {
 			".": "index", "./node": "node", "./harness/context": "harness/context",
+			"./experimental/pico3": "harness/pico3/index",
 			"./harness/env/nodejs": "harness/env/nodejs",
 			"./harness/runtime/reducer": "harness/runtime/reducer",
 			"./harness/session": "harness/session/index",

@@ -13,7 +13,7 @@ Rules live in `scripts/rhino-dependency-pruning.mjs`. Packaging checks all liste
 | Package | Audited version | Removed | Evidence |
 | --- | --- | --- | --- |
 | OpenAI | 6.40.0 | `src/`, 2,176,407 bytes | Node exports resolve compiled `.mjs` and `.js` files. Neither runtime tree imports source. Credential providers read caller-supplied token paths through `fs/promises`. Both module formats and all auth helpers remain. |
-| Anthropic | 0.123.0 | `src/`, 1,878,992 bytes | Node exports resolve compiled modules. Runtime credential and memory helpers read user files, not package source. `internal/node` and the compiled credential chain remain. |
+| Anthropic | 0.124.0 | `src/` | The 0.124.0 export map matches 0.123.0. Node exports resolve compiled modules. Runtime credential and memory helpers read user files, not package source. `internal/node` and the compiled credential chain remain. |
 | Zod | 4.4.3 | `src/`, 1,039,186 bytes | Standard Node import/require conditions resolve compiled modules. Only the development `@zod/source` condition selects TypeScript source; Hopper does not enable it. Keep v3, v4, mini, locales, and both compiled formats. |
 | cmake-ts | 1.0.2 | Source, four root build configs, build cache, `build/main.{js,mjs}` and `build/lib.{js,mjs}`, 1,369,362 bytes | ZeroMQ 6.5.0 `lib/load-addon.js` requires `cmake-ts/build/loader`. Both standalone loader formats import only Node builtins and read ZeroMQ's `build/manifest.json` and native addon paths. The build CLI is referenced by ZeroMQ's install script, which runs before pruning. Neither loader imports the build CLI/library. Both loaders and package metadata remain unchanged. |
 

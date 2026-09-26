@@ -8,7 +8,7 @@ const WEB_SIZE_BUDGETS = Object.freeze({
 });
 
 export const RHINO_PACKAGE_TARGETS = Object.freeze({
-	// Measured with Pi 0.85.1 and Excalidraw. Inspect a clean package manifest
+	// Measured with Pi 0.87.1 and Excalidraw. Inspect a clean package manifest
 	// and record its size in the PR before changing these ceilings.
 	"mac-arm64": Object.freeze({
 		os: "darwin", cpu: "arm64", maxStagedBytes: 83 * 1024 * 1024,
