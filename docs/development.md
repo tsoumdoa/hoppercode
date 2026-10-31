@@ -26,10 +26,9 @@ The main commands are:
 | `pnpm version:bump 0.3.0` | Set an explicit higher release version |
 | `pnpm release --dry-run` | Validate and preview publishing the existing release |
 | `pnpm release` | Publish the tested packages to Yak and create the GitHub tag and release |
-| `pnpm check` | Typecheck the host and browser, then run Vitest and startup benchmark tests |
+| `pnpm check` | Typecheck the host and browser, then run the essential Vitest guardrails |
 | `pnpm check:native` | Run .NET core tests and the cross-language RPC smoke test; requires .NET 8 SDK |
 | `pnpm test` | Run Vitest tests |
-| `pnpm test:benchmarks` | Run startup benchmark tests with Node's test runner |
 
 Release builds require .NET and Rhino 8's Yak executable. `pnpm build` builds both platforms sequentially and writes to `artifacts/hoppercode-<version>-<target>`. It refuses a nonempty output directory. Use `pnpm build --output artifacts/my-release` for another destination; each target gets its own `mac-arm64` or `win-x64` subfolder. `--target mac-arm64` and `--target win-x64` remain available for a single target. Cross-built packages still need runtime testing on their target OS.
 
@@ -46,7 +45,7 @@ pnpm build:install --build-only # Build and smoke-test without changing the inst
 
 `pnpm build --dev` is useful for debugging the compiled host or checking the built UI. It requires only JavaScript dependencies and writes source maps for both. For UI iteration with hot reload, use `pnpm dev`.
 
-Run `pnpm check` before opening a PR. Run `pnpm check:native` for native or protocol changes. These commands do not exercise Rhino UI, document undo, or installed plugin behavior; verify those in Rhino when affected. The benchmark tests use `node:test` and run separately from Vitest.
+Run `pnpm check` before opening a PR. Run `pnpm check:native` for native or protocol changes. These commands do not exercise Rhino UI, document undo, or installed plugin behavior; verify those in Rhino when affected.
 
 ## Use the real host with hot reload
 

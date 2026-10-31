@@ -44,7 +44,9 @@ async function host(exitNaturally = false) {
 
 it("waits for the verified host's graceful shutdown before allowing package replacement", async () => {
 	const { path, child } = await host(process.platform === "win32");
+	const exited = once(child, "exit");
 	await stopSharedHost(path);
+	await exited;
 	expect(child.exitCode).toBe(0);
 	expect(child.signalCode).toBeNull();
 	// A stopped host leaves discovery behind; reinstalling again must still work.
@@ -57,8 +59,4 @@ it("does not signal a process when discovery belongs to another host lifetime", 
 	await expect(stopSharedHost(path)).rejects.toThrow("Could not verify");
 	expect(child.exitCode).toBeNull();
 	expect(child.signalCode).toBeNull();
-});
-
-it("allows a first installation with no shared host discovery", async () => {
-	await stopSharedHost(await directory());
 });

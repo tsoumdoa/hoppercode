@@ -63,6 +63,9 @@ export class RhinoScriptStore {
 		try {
 			fd = openSync(lockPath, "wx", 0o600);
 		} catch (error) {
+			// Windows can report ENOENT when another writer unlinks the lock during open.
+			if ((error as NodeJS.ErrnoException).code === "ENOENT")
+				return fail("WORKSPACE_BUSY", "Workspace writer changed while acquiring the lock");
 			if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
 			let owner: { pid: number; hostname: string; claim: string };
 			try {

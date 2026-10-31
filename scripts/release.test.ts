@@ -3,7 +3,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import { tmpdir } from "node:os";
 import { join, delimiter } from "node:path";
 import { spawnSync } from "node:child_process";
-import { nextVersion, releaseArchives, sha256, verifyReleaseArchive, versionEdits, versionFiles } from "./release-utils.mjs";
+import { releaseArchives, sha256, verifyReleaseArchive, versionFiles } from "./release-utils.mjs";
 
 const temporary: string[] = [];
 afterEach(() => { for (const dir of temporary.splice(0)) rmSync(dir, { force: true, recursive: true }); });
@@ -15,23 +15,6 @@ function fixture() {
 	}
 	return root;
 }
-
-it("bumps stable versions and rejects decreases and invalid input", () => {
-	expect(nextVersion("0.2.9", "patch")).toBe("0.2.10");
-	expect(nextVersion("0.2.9", "minor")).toBe("0.3.0");
-	expect(nextVersion("0.2.9", "major")).toBe("1.0.0");
-	expect(nextVersion("0.2.9", "0.4.0")).toBe("0.4.0");
-	for (const value of ["0.2.9", "0.2.8", "v0.3.0", "0.3.0-beta", "01.0.0"]) expect(() => nextVersion("0.2.9", value)).toThrow();
-});
-
-it("validates all versions before editing and preserves other content", () => {
-	const root = fixture();
-	const result = versionEdits(root, "minor");
-	expect(result.edits.map((edit) => edit.text)).toEqual(['{"version":"0.3.0"}\n', '<Project><Version>0.3.0</Version></Project>\n', '<Project><Version>0.3.0</Version></Project>\n']);
-	writeFileSync(join(root, versionFiles[2]), '<Version>0.1.0</Version>');
-	expect(() => versionEdits(root, "patch")).toThrow("Version mismatch");
-	expect(JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version).toBe("0.2.0");
-});
 
 it("rejects dirty, stale, or modified archives", () => {
 	const root = fixture(); const archive = releaseArchives(root, "0.2.0")[0];

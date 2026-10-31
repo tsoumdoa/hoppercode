@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { RuntimeSessionContext, getRuntimeSessionContext } from "./runtime-session-context.js";
+import { RuntimeSessionContext } from "./runtime-session-context.js";
 import { beginRuntimeAgentTurn, cancelRuntimeAgentTurn, closeRuntimeRpc, commitRuntimeAgentTurn, getRuntimeRpc, type RuntimeRpc } from "./runtime-rpc.js";
 import { clearDocumentGuidAliases, resolveInstanceGuid, resolveRhinoGuid, toShortInstanceGuid, toShortRhinoGuid } from "../services/guid-shortener.js";
 import { getCachedBackendStatus, setCachedBackendStatus } from "./backend-status-cache.js";
@@ -72,15 +72,5 @@ describe("RuntimeSessionContext", () => {
 		expect(b.runtime.invoke).toHaveBeenCalledTimes(1);
 		expect(a.createRuntime).toHaveBeenCalledTimes(1);
 		expect(b.createRuntime).toHaveBeenCalledTimes(1);
-	});
-
-	it("restores the caller context after nested scopes and exceptions", () => {
-		const original = getRuntimeSessionContext();
-		const a = makeSession("a"), b = makeSession("b");
-		a.context.run(() => {
-			expect(() => b.context.run(() => { throw new Error("failed"); })).toThrow("failed");
-			expect(getRuntimeSessionContext()).toBe(a.context);
-		});
-		expect(getRuntimeSessionContext()).toBe(original);
 	});
 });

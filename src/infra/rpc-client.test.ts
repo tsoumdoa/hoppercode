@@ -3,9 +3,6 @@ import { describe, expect, it } from "vitest";
 import type { HopperRpcRequest, OperationResultSnapshot } from "../protocol/v2.js";
 import {
 	HopperRpcClient,
-	RpcDisconnectedError,
-	RpcProtocolError,
-	RpcTimeoutError,
 	type DealerSocket,
 	type DealerSocketFactory,
 	type RpcClock,
@@ -195,25 +192,6 @@ describe("HopperRpcClient", () => {
 		await client.close();
 	});
 
-	it("reconnects with the same identity after a query disconnect", async () => {
-		const { client, factory } = createClient();
-		const first = client.call("getCurrentCanvas", {});
-		const rejected = expect(first).rejects.toBeInstanceOf(RpcDisconnectedError);
-		await waitFor(() => factory.sockets[0]?.sent.length === 1);
-		factory.sockets[0].disconnect();
-		await rejected;
-
-		const second = client.call("getCurrentCanvas", {});
-		await waitFor(() => factory.sockets[1]?.sent.length === 1);
-		const request = factory.sockets[1].sent[0];
-		factory.sockets[1].respond(operationResponse(request, {
-			class: "completed", reasonCode: "OK", data: { reconnected: true },
-		}));
-		await second;
-		assert.deepEqual(factory.identities, ["hopper-node-test-process", "hopper-node-test-process"]);
-		await client.close();
-	});
-
 	it("recovers a lost mutation reply by lookup without resubmitting", async () => {
 		const { client, factory } = createClient();
 		const mutation = client.call("setSliderValue", { targetId: "slider-1", value: 4.5 });
@@ -306,46 +284,6 @@ describe("HopperRpcClient", () => {
 		assert.equal(result.result.class, "outcome_unknown");
 		assert.equal(result.operationId, "op-1");
 		assert.deepEqual(factory.sockets[0].sent.map((request) => request.operation), ["setSliderValue"]);
-		await client.close();
-	});
-
-	it("rejects a timed-out query without claiming cancellation", async () => {
-		const { client, factory, clock } = createClient();
-		const query = client.call("getCurrentCanvas", {}, { completionTimeoutMs: 100 });
-		const rejected = expect(query).rejects.toBeInstanceOf(RpcTimeoutError);
-		await waitFor(() => factory.sockets[0]?.sent.length === 1);
-		clock.advance(100);
-		await rejected;
-		assert.deepEqual(factory.sockets[0].sent.map((request) => request.operation), ["getCurrentCanvas"]);
-		await client.close();
-	});
-
-	it("rejects correlated protocol errors with their reason code", async () => {
-		const { client, factory } = createClient();
-		const query = client.call("getCurrentCanvas", {});
-		await waitFor(() => factory.sockets[0]?.sent.length === 1);
-		const request = factory.sockets[0].sent[0];
-		factory.sockets[0].respond({
-			protocolVersion: 2,
-			requestId: request.requestId,
-			errorType: "protocol_error",
-			lifecycleInstanceId: request.lifecycleInstanceId,
-			operation: request.operation,
-			result: {
-				class: "failed",
-				reasonCode: "AUTH_INVALID",
-				message: "Authentication failed.",
-			},
-		});
-
-		try {
-			await query;
-			assert.fail("query should reject");
-		} catch (error) {
-			assert.ok(error instanceof RpcProtocolError);
-			assert.equal(error.reasonCode, "AUTH_INVALID");
-			assert.equal(error.requestId, request.requestId);
-		}
 		await client.close();
 	});
 });

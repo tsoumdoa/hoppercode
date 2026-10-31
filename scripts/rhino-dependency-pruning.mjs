@@ -3,7 +3,7 @@
 export const DEPENDENCY_PRUNE_RULES = Object.freeze([
 	{ name: "openai", version: "6.40.0", paths: ["src"] },
 	{ name: "@anthropic-ai/sdk", version: "0.124.0", paths: ["src"] },
-	{ name: "zod", version: "4.4.3", paths: ["src"] },
+	{ name: "zod", version: "4.6.6", paths: ["src"] },
 	{
 		name: "cmake-ts", version: "1.0.2",
 		paths: ["src", "babel.config.mts", "vite.config.mts", "vitest.config.mts", "tsconfig.json",

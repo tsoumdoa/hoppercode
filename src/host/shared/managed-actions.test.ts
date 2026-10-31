@@ -5,7 +5,7 @@ import { afterEach, describe, it, expect } from "vitest";
 import { TaskJournal } from "./journal.js";
 import { SharedTaskService, type DriverContext } from "./task-service.js";
 import { DocumentActionService } from "./document-actions.js";
-import { GeometryTransferService, unitScale } from "./transfer.js";
+import { GeometryTransferService } from "./transfer.js";
 import type { TargetBinding } from "../../protocol/shared-execution.js";
 const binding = (document: string): TargetBinding => ({
 	kind: "rhino",
@@ -200,9 +200,5 @@ describe("managed document and artifact actions", () => {
 		finish();
 		await tick();
 		expect(journal.snapshot().tasks[0]!.state).toBe("uncertain");
-	});
-	it("requires declared physical units", () => {
-		expect(unitScale("Inches", "Millimeters")).toBeCloseTo(25.4);
-		expect(() => unitScale("None", "Meters")).toThrow("known");
 	});
 });

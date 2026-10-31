@@ -2,9 +2,9 @@
 
 Keep the release scripts and this guide in Git. Keep built `.yak` files and their build records in ignored `artifacts/` folders. `pnpm release` publishes the binaries to Yak and attaches the same files to a GitHub Release. Yak stores login credentials outside the repo; never commit or share them. The package documentation links to `https://github.com/tsoumdoa/hoppercode`, the hoppercode repository.
 
-Publish 0.2.0 through Yak and GitHub only. npm publishing is disabled. The `stable/0.1` branch preserves the final `hopper-pi` extension release and its setup instructions.
+Publish through Yak and GitHub only. npm publishing is disabled. The `stable/0.1` branch preserves the final `hopper-pi` extension release and its setup instructions.
 
-Run the local checks in [TESTING.md](../TESTING.md) before preparing a release. This repository intentionally does not run CI.
+Run the local checks in [TESTING.md](../TESTING.md) before preparing a release. GitHub Actions also runs `pnpm check` and `pnpm check:native` for pull requests and pushes to `main`. Package builds and in-Rhino acceptance checks remain local.
 
 ## Version and release shortcuts
 
@@ -29,8 +29,8 @@ For example, a major bump from `1.4.7` becomes `2.0.0`. The matching GitHub tag 
 
 For each release:
 
-1. Bump the version if needed. For the first native release, keep the prepared `0.2.0`.
-2. Review and commit all intended release changes, including the scripts for this first release. The working tree must be clean before building.
+1. Bump the version with `pnpm version:bump patch`, `minor`, `major`, or an explicit higher version.
+2. Review and commit all intended release changes. The working tree must be clean before building.
 3. Run `pnpm build`, then test those packages on Mac and Windows as described below.
 4. Run `pnpm release --dry-run`, then `pnpm release`.
 

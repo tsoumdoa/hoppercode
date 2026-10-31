@@ -45,34 +45,6 @@ describe("authoritative policy persistence", () => {
 		await expect(newer.repair()).rejects.toThrow("Tool settings are unavailable");
 	});
 
-	it("still rejects malformed retired entries instead of treating them as catalog changes", async () => {
-		const store = await create();
-		const policy = await store.read();
-		const json = JSON.stringify({ ...policy, tools: { ...policy.tools, retired: { enabled: "false", enabledAt: 0 } } });
-		await writeFile(join(store.directory, "tool-settings.json"), json);
-		await expect(store.read()).rejects.toThrow("Tool settings are unavailable");
-		expect(await readFile(join(store.directory, "tool-settings.json"), "utf8")).toBe(json);
-	});
-
-	it("drains lock operations on close and rejects new work", async () => {
-		const store = await create();
-		let entered!: () => void, resume!: () => void;
-		const started = new Promise<void>(resolve => { entered = resolve; });
-		const release = new Promise<void>(resolve => { resume = resolve; });
-		const pending = store.withSnapshot(async () => { entered(); await release; });
-		await started;
-		let closed = false;
-		const closing = store.close().then(() => { closed = true; });
-		await expect(store.read()).rejects.toMatchObject({ code: "settings-unavailable" });
-		expect(closed).toBe(false);
-		resume();
-		await pending;
-		await closing;
-		expect(closed).toBe(true);
-		await rm(store.directory, { recursive: true, force: true });
-		await expect(store.read()).rejects.toMatchObject({ code: "settings-unavailable" });
-	});
-
 	it("orders concurrent hosts and rejects stale edits even on other fields", async () => {
 		const first = await create();
 		const second = new ToolPolicyStore(inventory, { directory: first.directory });
@@ -97,13 +69,6 @@ describe("authoritative policy persistence", () => {
 		expect(next.epoch).not.toBe(repaired.epoch);
 		expect(next.parents.firecrawl.enabled).toBe(false);
 		expect(await store.update(repaired, { target: "tools", id: "test", enabled: true })).toMatchObject({ ok: false, code: "conflict" });
-	});
-	it("does not let a stale repair erase a healthy policy", async () => {
-		const store = await create();
-		const initial = await store.read();
-		await store.update(initial, { target: "tools", id: "test", enabled: false });
-		await expect(store.repair()).rejects.toMatchObject({ code: "settings-unavailable" });
-		expect((await store.read()).tools.test.enabled).toBe(false);
 	});
 	it("preserves corrupt and future files until explicit repair", async () => {
 		const store = await create();

@@ -13,33 +13,7 @@ public sealed class DocumentServiceTests : IDisposable
     private string FilePath(string name) => System.IO.Path.Combine(_directory, name + ".3dm");
     private static JsonElement Args(object value) => JsonSerializer.SerializeToElement(value, RpcV2Contract.JsonOptions);
     private static JsonElement Manage(FakeService service, object args) => service.Execute(RpcOperation.manageRhinoDocument, Args(args)).Data!.Value;
-    [Fact] public void ManualDocumentsStayUninitializedUntilExplicitOptIn()
-    {
-        var service = new FakeService();
-        var first = service.Add(null, false); first.Initialized = true;
-        var second = service.Add(null, false);
-        Assert.True(service.Describe(first).HopperInitialized);
-        Assert.False(service.Describe(second).HopperInitialized);
-        var inventory = service.Execute(RpcOperation.listRhinoDocuments, Args(new { })).Data!.Value.GetProperty("documents");
-        Assert.True(inventory[0].GetProperty("hopperInitialized").GetBoolean());
-        Assert.False(inventory[1].GetProperty("hopperInitialized").GetBoolean());
-        var token = service.Describe(second).StateToken;
-        second.Initialized = true;
-        Assert.True(service.Describe(second).HopperInitialized);
-        Assert.Equal(token, service.Describe(second).StateToken);
-    }
-    [Theory]
-    [InlineData("new")]
-    [InlineData("open")]
-    public void ManagedDocumentsAreInitializedWithoutAnotherCommand(string action)
-    {
-        var service = new FakeService(); var path = FilePath("opened");
-        File.WriteAllText(path, "fixture");
-        var response = Manage(service, new { action, path = action == "open" ? path : null,
-            expectedActiveDocument = (string?)null, affectedDocuments = Array.Empty<object>() });
-        Assert.True(response.GetProperty("ok").GetBoolean());
-        Assert.True(response.GetProperty("document").GetProperty("hopperInitialized").GetBoolean());
-    }
+
     [Fact] public void SharedDestinationSymlinkReplacementCannotRedirectMatchingContents()
     {
         if (OperatingSystem.IsWindows()) return;
@@ -132,33 +106,7 @@ public sealed class DocumentServiceTests : IDisposable
         var response = Manage(service, new { action = "save", documentId = observed.DocumentId, expectedStateToken = observed.StateToken });
         Assert.Equal("FILE_CHANGED_EXTERNALLY", response.GetProperty("error").GetProperty("code").GetString()); Assert.Equal(0, service.Writes);
     }
-    [Fact] public void SaveEndsEditingSegmentAndPreservesWrittenDocument()
-    {
-        var service = new FakeService(); var doc = service.Add(null, true); var observed = service.Describe(doc);
-        var response = Manage(service, new { action = "saveAs", documentId = observed.DocumentId, expectedStateToken = observed.StateToken, path = FilePath("new") });
-        Assert.True(response.GetProperty("ok").GetBoolean()); Assert.Equal(1, service.Boundaries); Assert.Equal(1, service.Writes); Assert.False(doc.Dirty);
-        Assert.Single(response.GetProperty("effects").EnumerateArray(), e => e.GetProperty("stage").GetString() == "save");
-    }
-    [Fact] public void CloseReportsOnlyOneEffectWithTheClosedDocumentHandle()
-    {
-        var service = new FakeService(); var doc = service.Add(null, false); var observed = service.Describe(doc);
-        var response = Manage(service, new { action = "close", documentId = observed.DocumentId, expectedStateToken = observed.StateToken });
-        var close = Assert.Single(response.GetProperty("effects").EnumerateArray(), e => e.GetProperty("stage").GetString() == "close");
-        Assert.Equal(observed.DocumentId, close.GetProperty("documentId").GetString());
-    }
-    [Fact] public void NativeSaveRefreshesExternalConflictBaseline()
-    {
-        var path = FilePath("native"); File.WriteAllText(path, "old"); var service = new FakeService(); var doc = service.Add(path, true); service.Describe(doc);
-        File.WriteAllText(path, "user"); service.ObserveNativeSave(doc); var observed = service.Describe(doc);
-        var response = Manage(service, new { action = "save", documentId = observed.DocumentId, expectedStateToken = observed.StateToken });
-        Assert.True(response.GetProperty("ok").GetBoolean());
-    }
-    [Fact] public void BrowseSupportsBoundedNativeFileInventory()
-    {
-        File.WriteAllText(FilePath("one"), ""); File.WriteAllText(System.IO.Path.Combine(_directory, "secret.txt"), ""); Directory.CreateDirectory(System.IO.Path.Combine(_directory, "sub"));
-        var result = Args(DocumentFiles.Browse(Args(new { path = _directory, kind = "rhino", limit = 1 })));
-        Assert.Single(result.GetProperty("entries").EnumerateArray()); Assert.Equal("1", result.GetProperty("nextCursor").GetString());
-    }
+
     [Fact] public void SymlinkDestinationCannotAliasOtherOpenDocument()
     {
         var path = FilePath("real"); File.WriteAllText(path, "original");

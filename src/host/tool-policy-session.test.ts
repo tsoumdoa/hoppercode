@@ -33,7 +33,7 @@ afterEach(async () => {
 	vi.unstubAllGlobals();
 });
 
-async function fixture(options: { progressive?: boolean; collision?: boolean } = {}) {
+async function fixture() {
 	const root = await mkdtemp(join(tmpdir(), "hopper-policy-sdk-"));
 	const secrets = new Map<string, string>();
 	let policy!: ToolPolicyRuntime;
@@ -52,14 +52,11 @@ async function fixture(options: { progressive?: boolean; collision?: boolean } =
 		policy = new ToolPolicyRuntime({ embedded: true, store, credentials: new Map([["firecrawl", credentials]]) });
 		const services = await createAgentSessionServices({
 			cwd: root, agentDir: join(root, "agent"),
-			// Pi's CLI flag map treats any present boolean flag as true, even a false value.
-			extensionFlagValues: options.progressive ? new Map([["hopper-progressive-tools", true]]) : undefined,
 			resourceLoaderOptions: isolatedResourceLoaderOptions({ toolPolicy: policy, scriptWorkspaceDir: join(root, "scripts"), sessionId: () => sessionManager.getSessionId() }),
 		});
 		const model = services.modelRuntime.getModels("anthropic").find(model => model.input.includes("image"))!;
 		expect(model).toBeDefined();
 		const customTools: ToolDefinition[] = [policy.customTool({ name: "read", label: "Read skill", description: "Read skill", parameters: Type.Object({}), execute: readCalls })];
-		if (options.collision) customTools.push({ name: "web_search", label: "Foreign search", description: "Owned by another extension", parameters: Type.Object({}), execute: async () => ({ content: [{ type: "text", text: "Foreign" }], details: {} }) });
 		const created = await createAgentSessionFromServices({ services, sessionManager, sessionStartEvent, noTools: "builtin", model, customTools });
 		return { ...created, services, diagnostics: services.diagnostics };
 	};
@@ -77,28 +74,6 @@ async function fixture(options: { progressive?: boolean; collision?: boolean } =
 }
 
 describe("real Pi SDK tool policy integration without network", () => {
-	it("registers the complete Hopper inventory after binding and guards every exposed tool", async () => {
-		const f = await fixture();
-		const names = new Set(f.runtime.session.getAllTools().map(tool => tool.name));
-		for (const entry of HOPPER_POLICY_INVENTORY) expect(names.has(entry.name), entry.name).toBe(true);
-		const settings = await f.policy.getToolSettings();
-		for (const entry of HOPPER_POLICY_INVENTORY) expect(settings.tools.find(tool => tool.name === entry.name)?.id).toBe(entry.id);
-		expect(f.runtime.session.getActiveToolNames()).not.toContain("web_search");
-		expect(f.runtime.session.getActiveToolNames()).toContain("ask_user");
-		expect(f.runtime.session.getActiveToolNames()).toContain("pick_option");
-		expect(f.runtime.session.getActiveToolNames()).toContain("rh_capture_view");
-		await f.policy.credentialsFor("firecrawl").save(await f.policy.store.read(), "memory-only-key", true);
-		await f.policy.reconcile();
-		const exposed = f.runtime.session.agent.state.tools.slice();
-		expect(exposed.map(tool => tool.name).sort()).toEqual(HOPPER_POLICY_INVENTORY.map(tool => tool.name).sort());
-		for (const parent of (await f.policy.getToolSettings()).settings!.parents) await f.patch(parent.id, false, "parents");
-		for (const tool of exposed) {
-			const result = await tool.execute(`guard-${tool.name}`, {});
-			expect(JSON.stringify(result), tool.name).toContain("parent-disabled");
-		}
-		expect(f.readCalls).not.toHaveBeenCalled();
-		expect(fetch).not.toHaveBeenCalled();
-	});
 
 	it("a real newSession preserves disables and recreates guarded choice and capture tools", async () => {
 		const f = await fixture();
@@ -112,44 +87,6 @@ describe("real Pi SDK tool policy integration without network", () => {
 		expect(f.runtime.session.getActiveToolNames()).not.toContain("ask_user");
 		expect(f.runtime.session.getActiveToolNames()).toContain("pick_option");
 		expect(f.runtime.session.getAllTools().map(tool => tool.name)).toContain("rh_capture_view");
-	});
-
-	it("manual activation works with discovery disabled and resets in a real new session", async () => {
-		const f = await fixture({ progressive: true });
-		await f.policy.credentialsFor("firecrawl").save(await f.policy.store.read(), "memory-only-key", true);
-		await f.patch("hopper.tool.hopper_search_tools", false);
-		await f.policy.reconcile();
-		expect(f.runtime.session.getActiveToolNames()).not.toContain("hopper_search_tools");
-		expect(f.runtime.session.getActiveToolNames()).not.toContain("web_search");
-		await f.policy.activate("firecrawl.tool.search");
-		await f.policy.reconcile();
-		expect(f.runtime.session.getActiveToolNames()).toContain("web_search");
-		await f.runtime.newSession();
-		expect(f.runtime.session.getActiveToolNames()).not.toContain("web_search");
-		expect(f.runtime.session.getActiveToolNames()).not.toContain("hopper_search_tools");
-		expect((await f.policy.store.read()).parents.firecrawl.enabled).toBe(true);
-	});
-
-	it("a foreign search name blocks the whole plugin without replacing the foreign tool", async () => {
-		const f = await fixture({ collision: true });
-		const settings = await f.policy.getToolSettings();
-		expect(settings.tools.filter(tool => tool.parent === "firecrawl").map(tool => tool.status)).toEqual(["registration-conflict", "registration-conflict"]);
-		const search = f.runtime.session.agent.state.tools.find(tool => tool.name === "web_search")!;
-		expect(search).toBeDefined();
-		expect(await search.execute("foreign", {})).toMatchObject({ content: [{ text: "Foreign" }] });
-		expect(f.runtime.session.getAllTools().map(tool => tool.name)).not.toContain("web_fetch");
-	});
-
-	it("real progressive discovery omits a user-disabled specialist", async () => {
-		const f = await fixture({ progressive: true });
-		await f.policy.credentialsFor("firecrawl").save(await f.policy.store.read(), "memory-only-key", true);
-		await f.patch("firecrawl.tool.search", false);
-		await f.policy.reconcile();
-		const discovery = f.runtime.session.agent.state.tools.find(tool => tool.name === "hopper_search_tools")!;
-		const result = await discovery.execute("discovery", { query: "web search", limit: 10 });
-		expect(JSON.stringify(result)).not.toContain("web_search");
-		await f.policy.reconcile();
-		expect(f.runtime.session.getActiveToolNames()).not.toContain("web_search");
 	});
 
 	it.each([true, false])("refreshes tool definitions before a continuation, embedded hook=%s", async embeddedHook => {

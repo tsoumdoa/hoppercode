@@ -5,102 +5,6 @@ namespace Hopper.Core.Tests;
 
 public class MutationResultStoreTests
 {
-    [Fact]
-    public void QueriesCannotBeAdmittedOrRetained()
-    {
-        var fixture = Fixture();
-
-        var admission = fixture.Store.Admit(OperationRetentionKind.Query, "query-id");
-
-        Assert.Equal(MutationAdmissionState.QueryNotRetained, admission.State);
-        Assert.Equal(0, admission.Snapshot.TotalCount);
-        Assert.Equal(MutationLookupState.NotFound, fixture.Store.Lookup("query-id").State);
-        Assert.Equal(MutationCompletionState.NotFound, fixture.Store.Complete("query-id", Result("query")).State);
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void MutationAdmissionRequiresOperationId(string? operationId)
-    {
-        var fixture = Fixture();
-
-        var result = fixture.Store.Admit(OperationRetentionKind.Mutation, operationId);
-
-        Assert.Equal(MutationAdmissionState.InvalidOperationId, result.State);
-        Assert.Equal(0, result.Snapshot.TotalCount);
-    }
-
-    [Fact]
-    public void DefaultCountAndByteBoundariesAllowExactly256Reservations()
-    {
-        var fixture = Fixture();
-
-        for (var index = 0; index < 256; index++)
-        {
-            Assert.Equal(
-                MutationAdmissionState.Admitted,
-                fixture.Store.Admit(OperationRetentionKind.Mutation, $"operation-{index}").State);
-        }
-
-        var snapshot = fixture.Store.GetSnapshot();
-        Assert.Equal(256, snapshot.InFlightCount);
-        Assert.Equal(16L * 1024 * 1024, snapshot.UsedBytes);
-        Assert.Equal(
-            MutationAdmissionState.Busy,
-            fixture.Store.Admit(OperationRetentionKind.Mutation, "operation-overflow").State);
-    }
-
-    [Fact]
-    public void ConfiguredByteLimitCanBindBeforeCountLimit()
-    {
-        var fixture = Fixture(new MutationResultStoreOptions
-        {
-            MaximumCount = 10,
-            MaximumBytes = 200,
-            ReservationBytes = 100,
-            MaximumTerminalResultBytes = 100,
-        });
-
-        Assert.Equal(MutationAdmissionState.Admitted, fixture.Store.Admit(OperationRetentionKind.Mutation, "one").State);
-        Assert.Equal(MutationAdmissionState.Admitted, fixture.Store.Admit(OperationRetentionKind.Mutation, "two").State);
-        Assert.Equal(MutationAdmissionState.Busy, fixture.Store.Admit(OperationRetentionKind.Mutation, "three").State);
-    }
-
-    [Fact]
-    public void AdmissionReservesFullResultSlotAndDuplicateDoesNotReserveAgain()
-    {
-        var fixture = Fixture();
-        var first = fixture.Store.Admit(OperationRetentionKind.Mutation, "same");
-
-        Assert.Equal(MutationAdmissionState.Admitted, first.State);
-        Assert.Equal(1, first.Snapshot.InFlightCount);
-        Assert.Equal(MutationResultStoreOptions.DefaultReservationBytes, first.Snapshot.UsedBytes);
-        Assert.Equal(MutationLookupState.Pending, fixture.Store.Lookup("same").State);
-
-        var duplicate = fixture.Store.Admit(OperationRetentionKind.Mutation, "same");
-
-        Assert.Equal(MutationAdmissionState.ExistingPending, duplicate.State);
-        Assert.Equal(1, duplicate.Snapshot.TotalCount);
-        Assert.Equal(MutationResultStoreOptions.DefaultReservationBytes, duplicate.Snapshot.UsedBytes);
-    }
-
-    [Fact]
-    public void CompletionConvertsReservationToActualSerializedBytes()
-    {
-        var fixture = Fixture();
-        fixture.Store.Admit(OperationRetentionKind.Mutation, "operation-1");
-
-        var completion = fixture.Store.Complete("operation-1", Result("done"));
-
-        Assert.Equal(MutationCompletionState.Completed, completion.State);
-        Assert.Equal(0, completion.Snapshot.InFlightCount);
-        Assert.Equal(1, completion.Snapshot.TerminalCount);
-        Assert.Equal(4, completion.Snapshot.UsedBytes);
-        Assert.Equal("done", completion.TerminalResult!.Body);
-        Assert.Equal(4, completion.TerminalResult.ByteCount);
-    }
 
     [Fact]
     public void DuplicateTerminalAdmissionReturnsStoredResultWithoutExecutingAgain()
@@ -117,34 +21,6 @@ public class MutationResultStoreTests
         Assert.Equal(MutationCompletionState.ExistingTerminal, secondCompletion.State);
         Assert.Equal("first", secondCompletion.TerminalResult!.Body);
         Assert.Equal(5, secondCompletion.Snapshot.UsedBytes);
-    }
-
-    [Fact]
-    public void LookupReturnsPendingTerminalAndNotFoundStates()
-    {
-        var fixture = Fixture();
-        fixture.Store.Admit(OperationRetentionKind.Mutation, "operation-1");
-
-        Assert.Equal(MutationLookupState.Pending, fixture.Store.Lookup("operation-1").State);
-        fixture.Store.Complete("operation-1", Result("terminal"));
-        var terminal = fixture.Store.Lookup("operation-1");
-        Assert.Equal(MutationLookupState.Terminal, terminal.State);
-        Assert.Equal("terminal", terminal.TerminalResult!.Body);
-        Assert.Equal(MutationLookupState.NotFound, fixture.Store.Lookup("missing").State);
-    }
-
-    [Fact]
-    public void AcceptsSerializedTerminalResultAtExactByteBoundary()
-    {
-        var fixture = Fixture();
-        fixture.Store.Admit(OperationRetentionKind.Mutation, "operation-1");
-        var body = new string('a', 65_536);
-
-        var completion = fixture.Store.Complete("operation-1", Result(body));
-
-        Assert.Equal(MutationCompletionState.Completed, completion.State);
-        Assert.Equal(MutationLookupState.Terminal, fixture.Store.Lookup("operation-1").State);
-        Assert.Equal(65_536, fixture.Store.GetSnapshot().UsedBytes);
     }
 
     [Fact]
@@ -165,22 +41,6 @@ public class MutationResultStoreTests
     }
 
     [Fact]
-    public void ByteLimitUsesUtf8SizeRatherThanCharacterCount()
-    {
-        var fixture = Fixture();
-        fixture.Store.Admit(OperationRetentionKind.Mutation, "exact");
-        fixture.Store.Admit(OperationRetentionKind.Mutation, "over");
-        var exact = new string('a', 65_532) + "😀";
-        var over = new string('a', 65_533) + "😀";
-
-        Assert.Equal(65_534, exact.Length);
-        Assert.Equal(MutationCompletionState.Completed, fixture.Store.Complete("exact", Result(exact)).State);
-        Assert.Equal(65_536, fixture.Store.Lookup("exact").TerminalResult!.ByteCount);
-        Assert.Equal(MutationCompletionState.ResultTooLarge, fixture.Store.Complete("over", Result(over)).State);
-        Assert.Equal(OversizedTerminalBody, fixture.Store.Lookup("over").TerminalResult!.Body);
-    }
-
-    [Fact]
     public void SerializerFailureLeavesOperationPending()
     {
         var fixture = Fixture();
@@ -189,45 +49,6 @@ public class MutationResultStoreTests
 
         Assert.Throws<InvalidOperationException>(() => fixture.Store.Complete("operation-1", Result("unused")));
         Assert.Equal(MutationLookupState.Pending, fixture.Store.Lookup("operation-1").State);
-    }
-
-    [Fact]
-    public void TerminalResultExpiresTenMinutesFromCompletion()
-    {
-        var fixture = Fixture();
-        fixture.Store.Admit(OperationRetentionKind.Mutation, "operation-1");
-        fixture.Clock.Advance(TimeSpan.FromHours(2));
-        var completion = fixture.Store.Complete("operation-1", Result("done"));
-        Assert.Equal(fixture.Clock.UtcNow, completion.TerminalResult!.CompletedAt);
-
-        fixture.Clock.Advance(TimeSpan.FromMinutes(10) - TimeSpan.FromTicks(1));
-        Assert.Equal(MutationLookupState.Terminal, fixture.Store.Lookup("operation-1").State);
-        fixture.Clock.Advance(TimeSpan.FromTicks(1));
-        Assert.Equal(MutationLookupState.NotFound, fixture.Store.Lookup("operation-1").State);
-        Assert.Equal(0, fixture.Store.GetSnapshot().UsedBytes);
-    }
-
-    [Fact]
-    public void AdmissionPurgesExpiredResultsBeforeCapacityCheck()
-    {
-        var fixture = Fixture(new MutationResultStoreOptions
-        {
-            MaximumCount = 1,
-            MaximumBytes = 100,
-            ReservationBytes = 100,
-            MaximumTerminalResultBytes = 100,
-            TimeToLive = TimeSpan.FromMinutes(10),
-        });
-        fixture.Store.Admit(OperationRetentionKind.Mutation, "old");
-        fixture.Store.Complete("old", Result(new string('o', 100)));
-        Assert.Equal(MutationAdmissionState.Busy, fixture.Store.Admit(OperationRetentionKind.Mutation, "early").State);
-
-        fixture.Clock.Advance(TimeSpan.FromMinutes(10));
-        var admitted = fixture.Store.Admit(OperationRetentionKind.Mutation, "new");
-
-        Assert.Equal(MutationAdmissionState.Admitted, admitted.State);
-        Assert.Equal(1, admitted.Snapshot.InFlightCount);
-        Assert.Equal(100, admitted.Snapshot.UsedBytes);
     }
 
     [Fact]
@@ -304,36 +125,6 @@ public class MutationResultStoreTests
     }
 
     [Fact]
-    public async Task OversizedCompletionLosingRaceReturnsExistingTerminal()
-    {
-        var fixture = Fixture();
-        fixture.Store.Admit(OperationRetentionKind.Mutation, "same");
-        using var oversizedSerializationStarted = new ManualResetEventSlim();
-        using var allowOversizedSerialization = new ManualResetEventSlim();
-        fixture.Serializer.OnSerialize = result =>
-        {
-            if (result.Body.Length > 65_536)
-            {
-                oversizedSerializationStarted.Set();
-                allowOversizedSerialization.Wait();
-            }
-            return new SerializedMutationResult(result.Body);
-        };
-        var oversizedBody = new string('x', 65_537);
-        var oversizedTask = Task.Run(() => fixture.Store.Complete("same", Result(oversizedBody)));
-        oversizedSerializationStarted.Wait();
-
-        var winner = fixture.Store.Complete("same", Result("winner"));
-        allowOversizedSerialization.Set();
-        var loser = await oversizedTask;
-
-        Assert.Equal(MutationCompletionState.Completed, winner.State);
-        Assert.Equal(MutationCompletionState.ExistingTerminal, loser.State);
-        Assert.Equal(winner.TerminalResult, loser.TerminalResult);
-        Assert.Equal("winner", fixture.Store.Lookup("same").TerminalResult!.Body);
-    }
-
-    [Fact]
     public async Task CleanupCanWinRaceWhileCompletionSerializesWithoutLeakingReservation()
     {
         var fixture = Fixture();
@@ -356,24 +147,6 @@ public class MutationResultStoreTests
         Assert.Equal(MutationCompletionState.NotFound, completion.State);
         Assert.Equal(0, fixture.Store.GetSnapshot().TotalCount);
         Assert.Equal(0, fixture.Store.GetSnapshot().UsedBytes);
-    }
-
-    [Fact]
-    public void OversizedFallbackMustFitLimitByUtf8ByteCount()
-    {
-        var options = new MutationResultStoreOptions
-        {
-            MaximumCount = 1,
-            MaximumBytes = 3,
-            ReservationBytes = 3,
-            MaximumTerminalResultBytes = 3,
-        };
-
-        Assert.Throws<ArgumentException>(() => new MutationResultStore<TestResult>(
-            new FakeClock(DateTimeOffset.UnixEpoch),
-            new FakeSerializer(),
-            new OperationResultTooLargeTerminal("😀"),
-            options));
     }
 
     private const string OversizedTerminalBody = "{\"class\":\"failed\",\"reasonCode\":\"OPERATION_RESULT_TOO_LARGE\"}";

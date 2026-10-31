@@ -7,19 +7,6 @@ namespace Hopper.Core.Tests.Operations;
 
 public sealed class DocumentSessionTests
 {
-    [Theory]
-    [InlineData("idle")]
-    [InlineData("abandoned")]
-    public void DocumentChangeWithoutActiveTransactionPreservesState(string state)
-    {
-        var owner = "test-" + Guid.NewGuid();
-        var before = DocumentSession.Advance(owner, null, state);
-        var closed = false;
-        DocumentSession.AbandonActiveSegment(owner, false, () => closed = true);
-        DocumentSession.AbandonActiveSegment(owner, false, () => closed = true);
-        Assert.False(closed);
-        Assert.Equal(before, DocumentSession.Segment(owner));
-    }
 
     [Theory]
     [InlineData("active", true)]

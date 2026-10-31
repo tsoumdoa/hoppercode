@@ -3,16 +3,15 @@ allowBuilds:
   esbuild: true
   protobufjs: true
   zeromq: true
-# Pi 0.85.0 imports pi-server through its SDK entry point but omits the dependency.
-packageExtensions:
-  '@earendil-works/pi-coding-agent@0.85.0':
-    dependencies:
-      '@earendil-works/pi-server': 0.85.0
+# Security fixes for transitive versions pinned by Pi and Excalidraw.
+overrides:
+  undici@8.10.2: 8.12.2
+  minimatch@10.2.6: 11.0.1
+  lodash-es@4.17.21: 4.18.1
+  nanoid@3.3.3: 3.3.20
+  nanoid@4.0.2: 5.1.16
+  katex@0.16.47: 0.18.2
 minimumReleaseAgeExclude:
-  - '@earendil-works/pi-agent-core@0.77.0 || 0.79.1 || 0.80.6 || 0.80.10 || 0.85.0 || 0.85.1'
-  - '@earendil-works/pi-ai@0.77.0 || 0.79.1 || 0.80.6 || 0.80.10 || 0.85.0 || 0.85.1'
-  - '@earendil-works/pi-coding-agent@0.77.0 || 0.79.1 || 0.80.6 || 0.80.10 || 0.85.0 || 0.85.1'
-  - '@earendil-works/pi-tui@0.77.0 || 0.79.1 || 0.80.6 || 0.80.10 || 0.85.0 || 0.85.1'
   - '@mariozechner/clipboard-darwin-arm64@0.3.9'
   - '@mariozechner/clipboard-darwin-universal@0.3.9'
   - '@mariozechner/clipboard-darwin-x64@0.3.9'
@@ -24,8 +23,3 @@ minimumReleaseAgeExclude:
   - '@mariozechner/clipboard-win32-arm64-msvc@0.3.9'
   - '@mariozechner/clipboard-win32-x64-msvc@0.3.9'
   - '@mariozechner/clipboard@0.3.9'
-  - '@earendil-works/pi-telemetry@0.85.0 || 0.85.1'
-  - '@earendil-works/chord@0.85.0 || 0.85.1'
-  - '@earendil-works/pi-client@0.85.0'
-  - '@earendil-works/pi-protocol@0.85.0'
-  - '@earendil-works/pi-server@0.85.0'

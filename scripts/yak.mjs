@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { join, resolve, isAbsolute } from "node:path";
+import { basename, join, resolve, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
+import { releaseArchives } from "./release-utils.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
@@ -49,12 +50,11 @@ Set HOPPER_YAK to an absolute executable path for a custom Rhino installation.`)
 		if (result.status !== 0) throw new Error(`Yak failed with exit code ${result.status ?? "unknown"}. Stopping; earlier successful uploads remain on the server.`);
 	}
 	function archive(target, allowDirectOutput = false) {
-		const name = `hoppercode-${version}-rh8_20-${target === "mac-arm64" ? "mac" : "win"}.yak`;
-		let folder = values.output ? resolve(root, values.output, target) : join(root, "artifacts", `hoppercode-${version}-${target}`);
-		if (allowDirectOutput && values.output && !existsSync(join(folder, name))) {
+		let { folder, file } = releaseArchives(root, version, values.output).find((archive) => archive.target === target);
+		if (allowDirectOutput && values.output && !existsSync(file)) {
+			file = resolve(root, values.output, basename(file));
 			folder = resolve(root, values.output);
 		}
-		const file = join(folder, name);
 		if (!existsSync(file) || !statSync(file).isFile() || statSync(file).size === 0) throw new Error(`Missing or empty package: ${file}. Run pnpm build first.`);
 		return { folder, file };
 	}

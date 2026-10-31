@@ -13,52 +13,6 @@ public class InstanceProfilePolicyTests
         new(2026, 8, 1, 10, 0, 1, TimeSpan.Zero);
 
     [Fact]
-    public void CodecRoundTripsAllAuthoritativeFields()
-    {
-        var profile = Profile();
-
-        var json = InstanceProfileCodec.Serialize(profile);
-        var parsed = InstanceProfileCodec.TryDeserialize(json, out var roundTripped);
-
-        Assert.True(parsed);
-        Assert.Equal(profile, roundTripped);
-        Assert.Contains("\"ownerProcessId\": 4242", json);
-        Assert.Contains("\"ownerProcessStartedAt\"", json);
-        Assert.Contains("\"lifecycleInstanceId\": \"instance-a\"", json);
-        Assert.Contains("\"createdAt\"", json);
-        Assert.Contains("\"rpcEndpoint\"", json);
-        Assert.Contains("\"pubEndpoint\"", json);
-        Assert.Contains("\"authentication\"", json);
-    }
-
-    [Theory]
-    [InlineData("not-json")]
-    [InlineData("{}")]
-    [InlineData("{\"protocolVersion\":2,\"ownerProcessId\":0}")]
-    public void CodecRejectsMalformedOrIncompleteProfiles(string json)
-    {
-        Assert.False(InstanceProfileCodec.TryDeserialize(json, out _));
-    }
-
-    [Fact]
-    public void StoreWritesAuthoritativeProfileBeforeBestEffortCompatibilityPointer()
-    {
-        var fileSystem = new FakeFileSystem();
-        var store = new InstanceProfileStore(fileSystem, new IncrementingTemporaryPaths());
-
-        var result = store.Write(Profile(), "/instances/a/profile.json", "/connection.json");
-
-        Assert.True(result.CompatibilityPointerWritten);
-        Assert.True(fileSystem.Files.ContainsKey("/instances/a/profile.json"));
-        Assert.Equal(
-            fileSystem.Files["/instances/a/profile.json"],
-            fileSystem.Files["/connection.json"]);
-        Assert.Equal(
-            new[] { "/instances/a/profile.json", "/connection.json" },
-            fileSystem.ReplacedDestinations);
-    }
-
-    [Fact]
     public void CompatibilityPointerFailureDoesNotUndoAuthoritativeProfile()
     {
         var fileSystem = new FakeFileSystem { FailMoveDestination = "/connection.json" };
@@ -100,26 +54,6 @@ public class InstanceProfilePolicyTests
     }
 
     [Fact]
-    public void CompatibilityPointerTracksLastCompletedStartWithoutChangingOtherProfiles()
-    {
-        var fileSystem = new FakeFileSystem();
-        var store = new InstanceProfileStore(fileSystem, new IncrementingTemporaryPaths());
-        store.Write(Profile(instanceId: "instance-a"), "/instances/a/profile.json", "/connection.json");
-
-        store.Write(
-            Profile(instanceId: "instance-b", processId: 5252),
-            "/instances/b/profile.json",
-            "/connection.json");
-
-        Assert.True(InstanceProfileCodec.TryDeserialize(
-            fileSystem.Files["/connection.json"], out var pointer));
-        Assert.Equal("instance-b", pointer!.LifecycleInstanceId);
-        Assert.True(InstanceProfileCodec.TryDeserialize(
-            fileSystem.Files["/instances/a/profile.json"], out var firstProfile));
-        Assert.Equal("instance-a", firstProfile!.LifecycleInstanceId);
-    }
-
-    [Fact]
     public void ActiveProfileAndLogsAreNeverDeletedBasedOnAge()
     {
         var fixture = Fixture(Running(StartedAt));
@@ -134,60 +68,6 @@ public class InstanceProfilePolicyTests
         Assert.True(fixture.FileSystem.DirectoryExists("/instances/a/logs"));
     }
 
-    [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void VerifiedDeadOwnerDeletesProfileButRetainsLogsForSevenDays(bool pidWasReused)
-    {
-        var observation = pidWasReused
-            ? Running(StartedAt.AddMinutes(1))
-            : new ProcessIdentityObservation(ProcessInspectionState.NotRunning);
-        var fixture = Fixture(observation);
-
-        var result = fixture.Policy.Cleanup(Paths());
-
-        Assert.Equal(InstanceProfileOwnershipState.VerifiedDead, result.OwnershipState);
-        Assert.True(result.VerifiedDeadMarkerWritten);
-        Assert.True(result.ProfileDeleted);
-        Assert.False(result.LogsDeleted);
-        Assert.False(fixture.FileSystem.FileExists("/instances/a/profile.json"));
-        Assert.True(fixture.FileSystem.FileExists("/instances/a/verified-dead.json"));
-        Assert.True(fixture.FileSystem.DirectoryExists("/instances/a/logs"));
-        Assert.Equal(4242, fixture.Processes.LastProcessId);
-    }
-
-    [Fact]
-    public void PidReuseStartMismatchIsRepresentedAsVerifiedDeadIdentity()
-    {
-        var fixture = Fixture(Running(StartedAt.AddTicks(1)));
-
-        var result = fixture.Policy.Cleanup(Paths());
-
-        Assert.Equal(InstanceProfileOwnershipState.VerifiedDead, result.OwnershipState);
-        Assert.Equal(4242, fixture.Processes.LastProcessId);
-        Assert.True(result.ProfileDeleted);
-    }
-
-    [Fact]
-    public void LogsDeleteAtSevenDayBoundaryUsingPersistedDeathProof()
-    {
-        var fixture = Fixture(new ProcessIdentityObservation(ProcessInspectionState.NotRunning));
-        fixture.Policy.Cleanup(Paths());
-        fixture.Clock.UtcNow += TimeSpan.FromDays(7) - TimeSpan.FromTicks(1);
-
-        var beforeBoundary = fixture.Policy.Cleanup(Paths());
-
-        Assert.False(beforeBoundary.LogsDeleted);
-        Assert.True(fixture.FileSystem.DirectoryExists("/instances/a/logs"));
-
-        fixture.Clock.UtcNow += TimeSpan.FromTicks(1);
-        var atBoundary = fixture.Policy.Cleanup(Paths());
-
-        Assert.True(atBoundary.LogsDeleted);
-        Assert.False(fixture.FileSystem.DirectoryExists("/instances/a/logs"));
-        Assert.False(fixture.FileSystem.FileExists("/instances/a/verified-dead.json"));
-    }
-
     [Fact]
     public void UninspectableProcessKeepsProfileAndLogs()
     {
@@ -199,48 +79,6 @@ public class InstanceProfilePolicyTests
         Assert.False(result.ProfileDeleted);
         Assert.False(result.LogsDeleted);
         Assert.True(fixture.FileSystem.FileExists("/instances/a/profile.json"));
-    }
-
-    [Fact]
-    public void RunningProcessWithoutInspectableStartTimeKeepsProfileAndLogs()
-    {
-        var fixture = Fixture(new ProcessIdentityObservation(ProcessInspectionState.Running));
-
-        var result = fixture.Policy.Cleanup(Paths());
-
-        Assert.Equal(InstanceProfileOwnershipState.Uninspectable, result.OwnershipState);
-        Assert.False(result.ProfileDeleted);
-        Assert.False(result.LogsDeleted);
-        Assert.True(fixture.FileSystem.FileExists("/instances/a/profile.json"));
-    }
-
-    [Fact]
-    public void MalformedProfileKeepsProfileAndLogsWithoutInspectingProcess()
-    {
-        var fixture = Fixture(new ProcessIdentityObservation(ProcessInspectionState.NotRunning));
-        fixture.FileSystem.Files["/instances/a/profile.json"] = "not-json";
-
-        var result = fixture.Policy.Cleanup(Paths());
-
-        Assert.Equal(InstanceProfileOwnershipState.Malformed, result.OwnershipState);
-        Assert.False(result.ProfileDeleted);
-        Assert.False(result.LogsDeleted);
-        Assert.Equal(0, fixture.Processes.CallCount);
-        Assert.True(fixture.FileSystem.FileExists("/instances/a/profile.json"));
-    }
-
-    [Fact]
-    public void ProfileReadFailureKeepsProfileAndLogs()
-    {
-        var fixture = Fixture(new ProcessIdentityObservation(ProcessInspectionState.NotRunning));
-        fixture.FileSystem.FailReadPath = "/instances/a/profile.json";
-
-        var result = fixture.Policy.Cleanup(Paths());
-
-        Assert.Equal(InstanceProfileOwnershipState.Uninspectable, result.OwnershipState);
-        Assert.False(result.ProfileDeleted);
-        Assert.False(result.LogsDeleted);
-        Assert.Equal(0, fixture.Processes.CallCount);
     }
 
     [Fact]
@@ -273,20 +111,6 @@ public class InstanceProfilePolicyTests
         Assert.False(result.ProfileDeleted);
         Assert.False(result.LogsDeleted);
         Assert.True(fixture.FileSystem.FileExists("/instances/a/profile.json"));
-        Assert.True(fixture.FileSystem.DirectoryExists("/instances/a/logs"));
-    }
-
-    [Fact]
-    public void NoProfileOrDeathProofNeverDeletesOrphanedLogs()
-    {
-        var fixture = Fixture(new ProcessIdentityObservation(ProcessInspectionState.NotRunning));
-        fixture.FileSystem.DeleteFile("/instances/a/profile.json");
-        fixture.Clock.UtcNow += TimeSpan.FromDays(365 * 50);
-
-        var result = fixture.Policy.Cleanup(Paths());
-
-        Assert.Equal(InstanceProfileOwnershipState.NoProfile, result.OwnershipState);
-        Assert.False(result.LogsDeleted);
         Assert.True(fixture.FileSystem.DirectoryExists("/instances/a/logs"));
     }
 

@@ -8,15 +8,15 @@ const WEB_SIZE_BUDGETS = Object.freeze({
 });
 
 export const RHINO_PACKAGE_TARGETS = Object.freeze({
-	// Measured with Pi 0.87.1 and Excalidraw. Inspect a clean package manifest
+	// Measured with Pi 0.87.1, patched Zod/Undici, and Excalidraw. Inspect a clean package manifest
 	// and record its size in the PR before changing these ceilings.
 	"mac-arm64": Object.freeze({
 		os: "darwin", cpu: "arm64", maxStagedBytes: 83 * 1024 * 1024,
-		sizeBudgets: Object.freeze({ ...WEB_SIZE_BUDGETS, nodeCode: 512 * 1024, nodeDependencies: 57 * 1024 * 1024 }),
+		sizeBudgets: Object.freeze({ ...WEB_SIZE_BUDGETS, nodeCode: 512 * 1024, nodeDependencies: 59 * 1024 * 1024 }),
 	}),
 	"win-x64": Object.freeze({
 		os: "win32", cpu: "x64", maxStagedBytes: 86 * 1024 * 1024,
-		sizeBudgets: Object.freeze({ ...WEB_SIZE_BUDGETS, nodeCode: 512 * 1024, nodeDependencies: 60 * 1024 * 1024 }),
+		sizeBudgets: Object.freeze({ ...WEB_SIZE_BUDGETS, nodeCode: 512 * 1024, nodeDependencies: 62 * 1024 * 1024 }),
 	}),
 });
 

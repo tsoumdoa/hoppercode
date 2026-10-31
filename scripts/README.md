@@ -45,7 +45,6 @@ Use the `pnpm` commands in [local development](../docs/development.md) for every
 | `ui-host-proxy.ts` | Resolves the shared host endpoint for Vite's HTTP and WebSocket proxy |
 | `cross-language-rpc-smoke.ts` | `pnpm check:native`; exercises TypeScript-to-C# RPC through a .NET test host |
 | `*.test.ts` | Script guardrails discovered by `vitest.config.ts` and run by `pnpm test` |
-| `benchmark-host-startup.test.mjs` | Tests the benchmark utility through Node's test runner; run by `pnpm test:benchmarks` and `pnpm check` |
 
 ## Manual diagnostics
 

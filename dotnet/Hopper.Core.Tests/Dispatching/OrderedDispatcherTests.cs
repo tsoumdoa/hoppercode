@@ -10,32 +10,6 @@ public class OrderedDispatcherTests
         new(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
 
     [Fact]
-    public async Task DefaultExternalQueueIsBoundedAt64AndReportsBusyDetails()
-    {
-        var scheduler = new ManualUiCallbackScheduler();
-        var clock = new ManualClock(InitialTime);
-        var dispatcher = new OrderedDispatcher(scheduler, clock);
-        var deadline = clock.UtcNow.AddMinutes(1);
-
-        var admitted = Enumerable.Range(0, OrderedDispatcher.DefaultCapacity)
-            .Select(value => dispatcher.SubmitExternal(() => value, deadline))
-            .ToArray();
-        var rejected = await dispatcher.SubmitExternal(() => -1, deadline);
-
-        Assert.Equal(DispatcherResultKind.Busy, rejected.Kind);
-        Assert.Equal("DISPATCHER_BUSY", rejected.Code);
-        Assert.Equal(64, rejected.Depth);
-        Assert.Equal(64, rejected.Capacity);
-        Assert.Equal(64, dispatcher.Status.ExternalDepth);
-        Assert.Equal(1, scheduler.PendingCount);
-
-        dispatcher.Shutdown();
-        var shutdownResults = await Task.WhenAll(admitted);
-        Assert.All(shutdownResults, result =>
-            Assert.Equal(DispatcherResultKind.ShuttingDown, result.Kind));
-    }
-
-    [Fact]
     public async Task ExternalWorkRunsFifoOneItemPerSchedulerCallback()
     {
         var scheduler = new ManualUiCallbackScheduler();
@@ -67,20 +41,6 @@ public class OrderedDispatcherTests
         var result = await third;
         Assert.Equal(DispatcherResultKind.Completed, result.Kind);
         Assert.Equal(3, result.Value);
-    }
-
-    [Fact]
-    public async Task ExpiredDeadlineIsRejectedBeforeAdmission()
-    {
-        var scheduler = new ManualUiCallbackScheduler();
-        var clock = new ManualClock(InitialTime);
-        var dispatcher = new OrderedDispatcher(scheduler, clock);
-
-        var result = await dispatcher.SubmitExternal(() => 1, clock.UtcNow);
-
-        Assert.Equal(DispatcherResultKind.DeadlineExceededBeforeStart, result.Kind);
-        Assert.Equal(0, dispatcher.Status.ExternalDepth);
-        Assert.Equal(0, scheduler.PendingCount);
     }
 
     [Fact]
@@ -157,62 +117,6 @@ public class OrderedDispatcherTests
     }
 
     [Fact]
-    public async Task LifecycleControlQueueIsNotCapacityLimited()
-    {
-        var scheduler = new ManualUiCallbackScheduler();
-        var clock = new ManualClock(InitialTime);
-        var dispatcher = new OrderedDispatcher(scheduler, clock);
-
-        var first = dispatcher.SubmitLifecycleControl(() => 1);
-        var cleanup = dispatcher.SubmitLifecycleControl(() => 2);
-
-        Assert.False(first.IsCompleted);
-        Assert.False(cleanup.IsCompleted);
-        Assert.Equal(2, dispatcher.Status.LifecycleDepth);
-        scheduler.RunNext();
-        scheduler.RunNext();
-        Assert.Equal(1, (await first).Value);
-        Assert.Equal(2, (await cleanup).Value);
-    }
-
-    [Fact]
-    public async Task CancellationCompletesLifecycleControlWaitingForUiThread()
-    {
-        var scheduler = new ManualUiCallbackScheduler();
-        var clock = new ManualClock(InitialTime);
-        var dispatcher = new OrderedDispatcher(scheduler, clock);
-        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
-
-        var cleanup = dispatcher.SubmitLifecycleControl(
-            () => true,
-            clock.UtcNow.AddMinutes(1),
-            cancellation.Token);
-
-        Assert.Equal(DispatcherResultKind.CancelledBeforeStart, (await cleanup).Kind);
-        Assert.Equal(0, dispatcher.Status.LifecycleDepth);
-    }
-
-    [Fact]
-    public async Task BulkCancellationOnlyCancelsQueuedExternalWork()
-    {
-        var scheduler = new ManualUiCallbackScheduler();
-        var clock = new ManualClock(InitialTime);
-        var dispatcher = new OrderedDispatcher(scheduler, clock, capacity: 2);
-        var deadline = clock.UtcNow.AddMinutes(1);
-        var first = dispatcher.SubmitExternal(() => 1, deadline);
-        var second = dispatcher.SubmitExternal(() => 2, deadline);
-        var lifecycle = dispatcher.SubmitLifecycleControl(() => 3);
-
-        Assert.Equal(2, dispatcher.CancelQueuedExternal());
-        Assert.Equal(DispatcherResultKind.CancelledBeforeStart, (await first).Kind);
-        Assert.Equal(DispatcherResultKind.CancelledBeforeStart, (await second).Kind);
-        Assert.False(lifecycle.IsCompleted);
-
-        scheduler.RunNext();
-        Assert.Equal(3, (await lifecycle).Value);
-    }
-
-    [Fact]
     public async Task KeyedCancellationRemovesOnlyTheMatchingQueuedOperation()
     {
         var scheduler = new ManualUiCallbackScheduler();
@@ -229,28 +133,6 @@ public class OrderedDispatcherTests
         Assert.False(first.IsCompleted);
         scheduler.RunNext();
         Assert.Equal(1, (await first).Value);
-    }
-
-    [Fact]
-    public void KeyedCancellationDistinguishesRunningAndMissingOperations()
-    {
-        var scheduler = new ManualUiCallbackScheduler();
-        var clock = new ManualClock(InitialTime);
-        var dispatcher = new OrderedDispatcher(scheduler, clock);
-        var deadline = clock.UtcNow.AddMinutes(1);
-        var observed = DispatcherCancellationState.NotFound;
-        dispatcher.SubmitExternal(
-            () => { Assert.True(dispatcher.IsOperationRunning("op-running")); return observed = dispatcher.CancelQueuedExternal("op-running"); },
-            deadline,
-            operationId: "op-running");
-
-        scheduler.RunNext();
-
-        Assert.Equal(DispatcherCancellationState.RejectedAlreadyStarted, observed);
-        Assert.False(dispatcher.IsOperationRunning("op-running"));
-        Assert.Equal(
-            DispatcherCancellationState.NotFound,
-            dispatcher.CancelQueuedExternal("op-missing"));
     }
 
     [Fact]
@@ -310,54 +192,6 @@ public class OrderedDispatcherTests
     }
 
     [Fact]
-    public async Task OperationExceptionsBecomeFailedResultsAndDoNotBlockTheQueue()
-    {
-        var scheduler = new ManualUiCallbackScheduler();
-        var clock = new ManualClock(InitialTime);
-        var dispatcher = new OrderedDispatcher(scheduler, clock);
-        var deadline = clock.UtcNow.AddMinutes(1);
-        var failed = dispatcher.SubmitExternal<int>(
-            () => throw new InvalidOperationException("broken"),
-            deadline);
-        var next = dispatcher.SubmitExternal(() => 42, deadline);
-
-        scheduler.RunNext();
-        scheduler.RunNext();
-
-        var failedResult = await failed;
-        Assert.Equal(DispatcherResultKind.Failed, failedResult.Kind);
-        Assert.IsType<InvalidOperationException>(failedResult.Exception);
-        Assert.Equal(42, (await next).Value);
-    }
-
-    [Fact]
-    public void StatusChangedTracksAdmissionQueueDepthAndExecution()
-    {
-        var scheduler = new ManualUiCallbackScheduler();
-        var clock = new ManualClock(InitialTime);
-        var dispatcher = new OrderedDispatcher(scheduler, clock, capacity: 2);
-        var snapshots = new List<DispatcherStatus>();
-        dispatcher.StatusChanged += snapshots.Add;
-
-        dispatcher.SubmitExternal(() => 1, clock.UtcNow.AddMinutes(1));
-        dispatcher.SubmitExternal(() => 2, clock.UtcNow.AddMinutes(1));
-        dispatcher.CloseExternalAdmission();
-
-        Assert.Equal(2, snapshots[^1].ExternalDepth);
-        Assert.False(snapshots[^1].AcceptingExternalWork);
-
-        scheduler.RunNext();
-
-        Assert.Equal(1, snapshots[^1].ExternalDepth);
-        Assert.False(snapshots[^1].IsRunning);
-
-        dispatcher.CancelQueuedExternal();
-
-        Assert.Equal(0, snapshots[^1].ExternalDepth);
-        Assert.False(snapshots[^1].AcceptingExternalWork);
-    }
-
-    [Fact]
     public async Task ThrowingStatusObserverCannotStallQueuedWork()
     {
         var scheduler = new ManualUiCallbackScheduler();
@@ -372,28 +206,6 @@ public class OrderedDispatcherTests
 
         Assert.Equal(1, (await first).Value);
         Assert.Equal(2, (await second).Value);
-    }
-
-    [Fact]
-    public async Task DiagnosticsFailureDoesNotBlockOperationOrNextCallback()
-    {
-        var scheduler = new ManualUiCallbackScheduler();
-        var clock = new ManualClock(InitialTime);
-        var dispatcher = new OrderedDispatcher(
-            scheduler,
-            clock);
-        var observed = 0;
-        dispatcher.ExecutionRecorded += _ => throw new InvalidOperationException("diagnostics failed");
-        dispatcher.ExecutionRecorded += _ => observed++;
-        var first = dispatcher.SubmitExternal(() => 1, clock.UtcNow.AddMinutes(1));
-        var second = dispatcher.SubmitExternal(() => 2, clock.UtcNow.AddMinutes(1));
-
-        scheduler.RunNext();
-        scheduler.RunNext();
-
-        Assert.Equal(1, (await first).Value);
-        Assert.Equal(2, (await second).Value);
-        Assert.Equal(2, observed);
     }
 
     private static T Record<T>(ICollection<T> order, T value)

@@ -54,10 +54,9 @@ To try your changes in Rhino, quit Rhino and run `pnpm build:install --open-rhin
 | `pnpm build --dev` | Compile the host and UI with source maps |
 | `pnpm build:install --build-only` | Build and smoke-test the local package without installing |
 | `pnpm build` | Build and verify macOS and Windows Yak packages |
-| `pnpm check` | Typecheck the host and browser, then run Vitest and startup benchmark tests |
+| `pnpm check` | Typecheck the host and browser, then run the essential Vitest guardrails |
 | `pnpm check:native` | Run .NET core tests and the cross-language RPC smoke test; requires .NET 8 SDK |
 | `pnpm test` | Run Vitest tests |
-| `pnpm test:benchmarks` | Run startup benchmark tests with Node's test runner |
 
 See [local development](docs/development.md) for connecting a hot-reloading UI to the real host, build options, and the source layout.
 

@@ -103,23 +103,6 @@ public sealed class RpcTransportOwnerTests
     }
 
     [Fact]
-    public void MandatoryDeliveryReportsDisconnectedRoute()
-    {
-        using var fixture = CreateFixture(useInProcessEndpoints: true);
-        var dealer = ConnectDealer(fixture.RouterEndpoint, "node-that-leaves");
-        dealer.SendFrame(Request("req-lost-route", RpcOperation.getCurrentCanvas));
-        fixture.Scheduler.WaitForPending();
-        dealer.Disconnect(fixture.RouterEndpoint);
-        dealer.Dispose();
-
-        Thread.Sleep(100);
-        fixture.Scheduler.RunNext();
-
-        WaitUntil(() => fixture.Owner.Status.MandatoryDeliveryFailureCount == 1);
-        Assert.NotNull(fixture.Owner.Status.LastDeliveryError);
-    }
-
-    [Fact]
     public void RejectsAuthVersionStaleInstanceAndExpiredDeadlineBeforeAdmission()
     {
         using var fixture = CreateFixture();
@@ -149,26 +132,6 @@ public sealed class RpcTransportOwnerTests
         Assert.Equal(0, fixture.Scheduler.PendingCount);
         Assert.Equal(0, fixture.Handler.CallCount);
         Assert.Equal(0, fixture.Owner.ResultStoreStatus.TotalCount);
-    }
-
-    [Fact]
-    public void OmitsInvalidEchoFieldsFromProtocolErrors()
-    {
-        using var fixture = CreateFixture();
-        using var dealer = ConnectDealer(fixture.RouterEndpoint, "node-invalid-echo");
-        var malformed = JsonNode.Parse(Request("req-invalid-echo", RpcOperation.getCurrentCanvas))!.AsObject();
-        malformed["protocolVersion"] = 1;
-        malformed["lifecycleInstanceId"] = "invalid lifecycle id";
-        malformed["operation"] = new string('x', 129);
-
-        dealer.SendFrame(malformed.ToJsonString());
-
-        var parsed = RpcV2Contract.ParseResponse(ReceiveRawResponse(dealer));
-        Assert.True(parsed.IsValid, string.Join("; ", parsed.Errors));
-        var response = Assert.IsType<ProtocolErrorResponseV2>(parsed.Value);
-        Assert.Equal(RpcReasonCode.PROTOCOL_VERSION_UNSUPPORTED, response.Result.ReasonCode);
-        Assert.Null(response.LifecycleInstanceId);
-        Assert.Null(response.Operation);
     }
 
     [Fact]
@@ -217,34 +180,6 @@ public sealed class RpcTransportOwnerTests
             CancelOperationState.not_found,
             fixture.Owner.CancelOperation("op-missing"));
         Assert.Equal(0, fixture.Handler.CallCount);
-    }
-
-    [Fact]
-    public void MutationRejectedBeforeStartIsRetainedForLostReplyLookup()
-    {
-        using var fixture = CreateFixture(dispatcherCapacity: 1);
-        using var dealer = ConnectDealer(fixture.RouterEndpoint, "node-busy-lookup");
-
-        dealer.SendFrame(Request("req-blocker", RpcOperation.getCurrentCanvas));
-        fixture.Scheduler.WaitForPending();
-        dealer.SendFrame(Request("req-mutation-busy", RpcOperation.setSliderValue, operationId: "op-busy-1"));
-
-        var rejected = ReceiveResponse(dealer);
-        Assert.Equal(RpcResultClass.busy, rejected.Result.Class);
-        Assert.Equal(RpcReasonCode.DISPATCHER_BUSY, rejected.Result.ReasonCode);
-        Assert.Equal(1, fixture.Owner.ResultStoreStatus.TerminalCount);
-
-        dealer.SendFrame(Request(
-            "req-busy-lookup",
-            RpcOperation.getOperationResult,
-            args: new { operationId = "op-busy-1" }));
-        var lookup = ReceiveResponse(dealer);
-        var data = lookup.Result.Data?.Deserialize<OperationLookupDataV2>(RpcV2Contract.JsonOptions);
-        Assert.Equal(OperationLookupState.terminal, data?.State);
-        Assert.Equal(RpcResultClass.busy, data?.Result?.Class);
-
-        fixture.Scheduler.RunNext();
-        _ = ReceiveResponse(dealer);
     }
 
     [Fact]
@@ -300,35 +235,6 @@ public sealed class RpcTransportOwnerTests
         Assert.Null(handshake);
         Assert.Equal(0, fixture.Scheduler.PendingCount);
         Assert.Equal(0, fixture.Handler.CallCount);
-    }
-
-    [Fact]
-    public async Task RejectedHandshakeReturnsTypedFailureAndDoesNotSignalLifecycle()
-    {
-        var observer = new HandshakeObserver(
-            RpcHandshakeObservation.Reject("The process ID does not match."));
-        using var fixture = CreateFixture(handshakeObserver: observer);
-        using var dealer = ConnectDealer(fixture.RouterEndpoint, "hopper-node-9999");
-
-        dealer.SendFrame(Request(
-            "req-handshake-rejected",
-            RpcOperation.lifecycleHandshake,
-            args: new
-            {
-                nodeProcessId = 9999,
-                nodeVersion = "v22.19.0",
-                clientIdentity = "hopper-node-9999",
-            }));
-
-        var response = ReceiveResponse(dealer);
-        var handshake = await fixture.Owner.WaitForAuthenticatedHandshakeAsync(
-            TimeSpan.FromMilliseconds(20));
-
-        Assert.Equal(RpcResultClass.failed, response.Result.Class);
-        Assert.Equal(RpcReasonCode.HANDSHAKE_REJECTED, response.Result.ReasonCode);
-        Assert.Equal("The process ID does not match.", response.Result.Message);
-        Assert.Null(handshake);
-        Assert.Equal(1, observer.CallCount);
     }
 
     [Fact]

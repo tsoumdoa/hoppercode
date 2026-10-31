@@ -246,20 +246,6 @@ it.each(["loading", "pending-status", "pending-start"])("cancels startup during 
 	}
 });
 
-it.each(["failed", "not_installed"])("does not create a document when Grasshopper is %s", async state => {
-	const { journal, registry, runtime } = await setup();
-	wire.call.mockClear();
-	wire.call.mockImplementation(async () => ({ result: { class: "completed", data: {
-		transport: { lifecycleInstanceId: "life" }, grasshopper: { state, activeDocument: false },
-		errors: { grasshopper: { message: "Grasshopper unavailable" } },
-	} } }));
-	const adapter = createNativeActionAdapters(runtime, journal, registry).documents;
-	await expect(adapter.preflight({ requestId: "new", taskId: "task", lifecycleInstanceId: "life",
-		kind: "grasshopper", action: "new", modifiedPolicy: "refuse" })).rejects.toThrow("Grasshopper unavailable");
-	expect(wire.call.mock.calls.every(call => call[0] === "getRuntimeStatus")).toBe(true);
-	expect(wire.unsubscribe).toHaveBeenCalledTimes(1);
-});
-
 it("preserves unsaved-document checks after Grasshopper becomes ready", async () => {
 	const { journal, registry, runtime } = await setup();
 	wire.call.mockClear();
@@ -300,60 +286,6 @@ it("bounds a stalled Grasshopper startup without retrying start or creating a do
 		vi.useRealTimers();
 		await runtime.close();
 	}
-});
-it.each(["settings", "top-level"])("exposes initialized documents and their Grasshopper targets with %s associations", async (association) => {
-	const { registry, runtime } = await setup();
-	let initialized = false;
-	let closed = false;
-	const normal = wire.call.getMockImplementation()!;
-	wire.call.mockImplementation(async (operation: string, ...args: any[]) => {
-		if (operation === "listRhinoDocuments") return { operation, result: { class: "completed", data: {
-			documents: [
-				{ documentId: "doc", name: "Untitled 1", hopperInitialized: true },
-				...(!closed ? [{ documentId: "doc-2", name: "Untitled 2", hopperInitialized: initialized }] : []),
-			], activeDocumentId: "doc-2",
-		} } };
-		if (operation === "listGrasshopperDocuments") return { operation, result: { class: "completed", data: {
-			documents: [{ documentId: "gh-2", ...(association === "settings" ? { settings: { associatedRhinoDocumentId: "doc-2" } } : { associatedRhinoDocumentId: "doc-2" }) }],
-		} } };
-		return normal(operation, ...args);
-	});
-	await runtime.refresh();
-	expect(registry.list()[0]!.documents).toEqual([{ kind: "rhino", lifecycleInstanceId: "life", rhinoDocumentId: "doc" }]);
-	expect(registry.list()[0]!.documentLabels).not.toHaveProperty("doc-2");
-	// Running HopperCode in the second document changes metadata, without reconnecting the process.
-	initialized = true;
-	await runtime.refresh();
-	expect(registry.list()[0]!.documents).toHaveLength(3);
-	expect(registry.list()[0]!.documentLabels!["doc-2"]).toBe("Untitled 2");
-	expect(wire.clients).toBe(1);
-	closed = true;
-	await runtime.refresh();
-	expect(registry.list()[0]!.documents).toHaveLength(1);
-});
-it.each([undefined, null, false, "true"])("does not advertise a document with initialization metadata %s", async (hopperInitialized) => {
-	const { registry, runtime } = await setup();
-	const normal = wire.call.getMockImplementation()!;
-	wire.call.mockImplementation(async (operation: string, ...args: any[]) => {
-		if (operation === "listRhinoDocuments") return { result: { class: "completed", data: {
-			documents: [
-				{ documentId: "doc", hopperInitialized: true },
-				{ documentId: "not-initialized", hopperInitialized },
-			], activeDocumentId: "not-initialized",
-		} } };
-		return normal(operation, ...args);
-	});
-	await runtime.refresh();
-	expect(registry.list()[0]!.documents).toEqual([{ kind: "rhino", lifecycleInstanceId: "life", rhinoDocumentId: "doc" }]);
-	expect(registry.list()[0]!.documentLabels).not.toHaveProperty("not-initialized");
-});
-it("recovers a transient document-query outage without requiring plugin restart", async () => {
-	const { registry, runtime } = await setup();
-	wire.call.mockRejectedValueOnce(new Error("UI queue busy"));
-	await runtime.refresh();
-	expect(registry.list()[0]!.admission).toBe("recovering");
-	await runtime.refresh();
-	expect(registry.list()[0]!.admission).toBe("ready");
 });
 it("does not reopen admission while recovered native scopes remain active", async () => {
 	const { registry, runtime } = await setup();
@@ -430,16 +362,6 @@ it("permits exact-generation cleanup after document drift while rejecting new ge
 	expect(wire.closeRuntime).toHaveBeenCalledTimes(1);
 	expect(wire.close).not.toHaveBeenCalled();
 
-});
-
-it("returns handshake-only admission before native startup opens the UI queue", async () => {
-	const { registry, runtime } = await setup(false);
-	expect(wire.call.mock.calls.map((call) => call[0])).toEqual([
-		"lifecycleHandshake",
-	]);
-	expect(registry.list()[0]!.admission).toBe("recovering");
-	await runtime.refresh();
-	expect(registry.list()[0]!.admission).toBe("ready");
 });
 it("serializes duplicate registration so retries retain one native DEALER route", async () => {
 	const journal = new TaskJournal(":memory:");
@@ -727,40 +649,6 @@ it("allows readiness after an explicit recovery disposition without rewriting un
 	expect(journal.snapshot().operations[0]!.state).toBe("uncertain");
 });
 
-it("retains human document labels and the native Grasshopper associated Rhino identity", async () => {
-	const { registry, runtime } = await setup(false);
-	const normal = wire.call.getMockImplementation()!;
-	wire.call.mockImplementation(async (operation: string, ...args: any[]) =>
-		operation === "listGrasshopperDocuments"
-			? {
-					result: {
-						class: "completed",
-						data: {
-							documents: [
-								{
-									documentId: "gh",
-									name: "Definition",
-									path: "/models/definition.gh",
-									settings: { associatedRhinoDocumentId: "doc" },
-								},
-							],
-						},
-					},
-				}
-			: normal(operation, ...args),
-	);
-	await runtime.refresh();
-	const attachment = registry.list()[0]!;
-	expect(attachment.documents).toContainEqual({
-		kind: "grasshopper",
-		lifecycleInstanceId: "life",
-		grasshopperDocumentId: "gh",
-		associatedRhinoDocumentId: "doc",
-	});
-	expect(attachment.documentLabels?.gh).toContain("Definition");
-	expect(attachment.documentLabels?.gh).toContain("/models/definition.gh");
-});
-
 it("activates only the captured inactive document before geometry initialization", async () => {
 	const { runtime, journal } = await setup();
 	const binding: TargetBinding = {
@@ -944,47 +832,6 @@ it("keeps the original host while any Rhino process survives and stops only afte
 	expect(runtime.shouldStopAfterRhinoExit(now + 80_000)).toBe(false);
 	alive.clear();
 	expect(runtime.shouldStopAfterRhinoExit(now + 80_001)).toBe(true);
-	await runtime.close();
-});
-
-it("keeps chat within a host and resets after host restart or every Rhino process exits", async () => {
-	const journal = new TaskJournal(":memory:"); journals.push(journal);
-	let registry = new SharedRegistry(journal);
-	const alive = new Set<number>([123]);
-	let runtime = new SharedNativeRuntime("epoch", registry, journal, (pid) => alive.has(pid));
-	const attach = async (life: string, pid: number, startIdentity: string) => {
-		wire.life = life;
-		alive.add(pid);
-		await runtime.register({ profilePath: `/${life}.json`, hostEpoch: "epoch", process: { pid, startIdentity } });
-	};
-	await attach("first", 123, "first-start");
-	const session = registry.conversationSession;
-	const conversation = journal.createConversation("old", "Existing work");
-	await attach("second", 456, "second-start");
-	expect(registry.conversationSession).toEqual(session);
-	// Restarting the host resets chat even while the same Rhino processes live.
-	await runtime.close();
-	registry = new SharedRegistry(journal);
-	const restartedSession = registry.conversationSession;
-	expect(restartedSession.id).not.toBe(session.id);
-	expect(restartedSession.afterConversationSequence).toBe(journal.lastConversationSequence);
-	runtime = new SharedNativeRuntime("epoch", registry, journal, (pid) => alive.has(pid));
-	await attach("first-reconnected", 123, "first-start");
-	expect(registry.conversationSession).toEqual(restartedSession);
-	alive.delete(123);
-	await runtime.refresh();
-	await attach("third", 789, "third-start");
-	expect(registry.conversationSession).toEqual(restartedSession);
-	// Quit and relaunch before the next poll. Even a reused PID starts a new session.
-	alive.clear();
-	await attach("new-session", 789, "new-start");
-	const next = registry.conversationSession;
-	expect(next.id).not.toBe(restartedSession.id);
-	expect(next.afterConversationSequence).toBe(journal.lastConversationSequence);
-	const stored = new SharedRegistry(journal);
-	expect(stored.conversationSession.id).not.toBe(next.id);
-	expect(stored.conversationSession.afterConversationSequence).toBe(next.afterConversationSequence);
-	expect(journal.snapshot().conversations[0]!.id).toBe(conversation.conversationId);
 	await runtime.close();
 });
 

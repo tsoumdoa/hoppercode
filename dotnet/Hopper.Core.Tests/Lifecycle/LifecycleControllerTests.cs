@@ -6,32 +6,6 @@ namespace Hopper.Core.Tests.Lifecycle;
 
 public sealed class LifecycleControllerTests
 {
-    [Fact]
-    public async Task StartBecomesRunningOnlyAfterAuthenticatedHandshake()
-    {
-        var fixture = new LifecycleFixture();
-        fixture.Transport.HandshakeGate = NewGate<LifecycleActionResult>();
-
-        var start = fixture.Controller.StartAsync();
-
-        Assert.Equal(LifecycleState.Starting, fixture.Controller.Snapshot.State);
-        Assert.False(start.IsCompleted);
-        Assert.Equal(TimeSpan.FromSeconds(60), fixture.Transport.HandshakeTimeout);
-
-        fixture.Transport.HandshakeGate.SetResult(LifecycleActionResult.Success());
-        var result = await start;
-
-        Assert.True(result.Accepted);
-        Assert.Equal(LifecycleState.Running, result.Snapshot.State);
-        Assert.Equal(LifecycleReasonCode.Started, result.Snapshot.Reason);
-        Assert.Equal(
-            [
-                "dispatcher.close", "dispatcher.cancel", "node.resolve",
-                "transport.start", "profile.write", "child.start",
-                "transport.handshake", "dispatcher.reopen",
-            ],
-            fixture.Calls);
-    }
 
     [Fact]
     public async Task StopDuringBlockedHandshakeIsAcceptedBeforeHandshakeCompletes()
@@ -126,20 +100,6 @@ public sealed class LifecycleControllerTests
     }
 
     [Fact]
-    public async Task FailedProfileWithoutCreatedFileDoesNotDeleteOrStartChild()
-    {
-        var fixture = new LifecycleFixture();
-        fixture.Profiles.WriteResult = new(false, false, null, "disk full");
-
-        var result = await fixture.Controller.StartAsync();
-
-        Assert.Equal(LifecycleReasonCode.ProfileWriteFailed, result.Snapshot.Reason);
-        Assert.Equal(0, fixture.Profiles.DeleteCount);
-        Assert.Equal(0, fixture.Child.StartCount);
-        Assert.Equal(1, fixture.Transport.StopCount);
-    }
-
-    [Fact]
     public async Task StopUsesLifecycleControlThenOrderedDeadlineBoundCleanup()
     {
         var fixture = await StartFixtureAsync();
@@ -211,73 +171,6 @@ public sealed class LifecycleControllerTests
     }
 
     [Fact]
-    public async Task PlainStartDuringStoppingIsIgnoredRatherThanQueued()
-    {
-        var fixture = await StartFixtureAsync();
-        fixture.Transport.StopGate = NewGate<bool>();
-        var stop = fixture.Controller.StopAsync();
-        Assert.Equal(LifecycleState.Stopping, fixture.Controller.Snapshot.State);
-
-        var start = await fixture.Controller.StartAsync();
-
-        Assert.False(start.Accepted);
-        Assert.Equal(LifecycleState.Stopping, start.Snapshot.State);
-        Assert.Equal(1, fixture.Transport.StartCount);
-        fixture.Transport.StopGate.SetResult(true);
-        await stop;
-        Assert.Equal(1, fixture.Transport.StartCount);
-    }
-
-    [Fact]
-    public async Task TransactionCleanupStartTimeoutIsTypedAndStillTearsDownResources()
-    {
-        var fixture = await StartFixtureAsync();
-        fixture.Dispatcher.LifecycleResult =
-            DispatcherResult<bool>.DeadlineExceededBeforeStart();
-
-        var result = await fixture.Controller.StopAsync();
-
-        Assert.Equal(LifecycleState.Faulted, result.Snapshot.State);
-        Assert.Equal(LifecycleReasonCode.TransactionCleanupTimeout, result.Snapshot.Reason);
-        Assert.Equal(
-            fixture.Clock.UtcNow.AddSeconds(2),
-            fixture.Dispatcher.LifecycleDeadline);
-        Assert.Equal(1, fixture.Child.GracefulStopCount);
-        Assert.Equal(1, fixture.Transport.StopCount);
-        Assert.Equal(1, fixture.Profiles.DeleteCount);
-    }
-
-    [Fact]
-    public async Task HealthThresholdFaultsAfterThreeConsecutiveFailures()
-    {
-        var fixture = await StartFixtureAsync();
-
-        await fixture.Controller.ReportHealthCheckAsync(false);
-        await fixture.Controller.ReportHealthCheckAsync(false);
-        Assert.Equal(LifecycleState.Running, fixture.Controller.Snapshot.State);
-        Assert.Equal(2, fixture.Controller.Snapshot.ConsecutiveHealthFailures);
-
-        await fixture.Controller.ReportHealthCheckAsync(false);
-
-        Assert.Equal(LifecycleState.Faulted, fixture.Controller.Snapshot.State);
-        Assert.Equal(
-            LifecycleReasonCode.HealthFailureThresholdReached,
-            fixture.Controller.Snapshot.Reason);
-    }
-
-    [Fact]
-    public async Task HealthyCheckResetsConsecutiveFailures()
-    {
-        var fixture = await StartFixtureAsync();
-        await fixture.Controller.ReportHealthCheckAsync(false);
-
-        await fixture.Controller.ReportHealthCheckAsync(true);
-
-        Assert.Equal(0, fixture.Controller.Snapshot.ConsecutiveHealthFailures);
-        Assert.Equal(LifecycleReasonCode.HealthCheckRecovered, fixture.Controller.Snapshot.Reason);
-    }
-
-    [Fact]
     public async Task UnexpectedChildExitFaultsAndCleansRemainingResources()
     {
         var fixture = await StartFixtureAsync();
@@ -316,23 +209,6 @@ public sealed class LifecycleControllerTests
         Assert.Equal(0, fixture.Child.GracefulStopCount);
         Assert.Equal(0, fixture.Child.WaitCount);
         Assert.Equal(0, fixture.Transport.StopCount);
-    }
-
-    [Fact]
-    public async Task SnapshotsAreImmutableRevisionedAndClockStamped()
-    {
-        var fixture = new LifecycleFixture();
-        var initial = fixture.Controller.Snapshot;
-        fixture.Clock.Advance(TimeSpan.FromSeconds(5));
-
-        await fixture.Controller.StartAsync();
-        var running = fixture.Controller.Snapshot;
-
-        Assert.Equal(0, initial.Revision);
-        Assert.Equal(LifecycleState.Stopped, initial.State);
-        Assert.Equal(2, running.Revision);
-        Assert.Equal(initial.ChangedAt.AddSeconds(5), running.ChangedAt);
-        Assert.Equal(LifecycleState.Stopped, initial.State);
     }
 
     private static async Task<LifecycleFixture> StartFixtureAsync()

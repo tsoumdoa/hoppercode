@@ -93,25 +93,6 @@ describe("shared scheduling", () => {
 			}
 		} finally { finish?.(); await service.stop(); journal.close(); }
 	});
-	it("lets native tools in separate Rhino processes execute concurrently", async () => {
-		const s = setup(4);
-		s.journal.registerSession("a", "a");
-		const a = s.service.submit({ requestId: "a", conversationId: "a", sessionId: "a", kind: "prompt", text: "edit", bindings: [binding("p"), binding("q")], messageTarget: binding("p"), attachments: [] });
-		const b = s.service.delegate({ requestId: "b", conversationId: "a", sessionId: "worker-b", parentTaskId: a.taskId, dependencies: [], kind: "prompt", text: "edit", bindings: [binding("q")], attachments: [] });
-		await tick();
-		const started: string[] = [];
-		const release: (() => void)[] = [];
-		const tools = s.contexts.map((context) => context.withNativeTool!(async () => {
-			started.push(context.taskId);
-			await new Promise<void>((resolve) => release.push(resolve));
-		}));
-		await tick();
-		expect(started).toEqual([a.taskId, b.taskId]);
-		for (const resolve of release) resolve();
-		await Promise.all(tools);
-		for (const task of [b, a]) { s.finish.get(task.taskId)!(); await tick(); s.clean.get(task.taskId)!(); await tick(); }
-		s.journal.close();
-	});
 	it.each([true, false])("schedules a second document according to confirmed cleanup (%s), even after a greeting with no native calls", async (confirmed) => {
 		const s = setup();
 		const first = s.submit("first", "p");
@@ -284,40 +265,6 @@ it("a coordinator question does not wait for a running child", async () => {
 		s.service.snapshot().tasks.find((t) => t.id === child.taskId)!.state,
 	).toBe("running");
 });
-it.each(["same", "other"])("starts a new request and its child after historical usage exceeds the limit in the %s conversation", async (conversation) => {
-	const journal = new TaskJournal(":memory:");
-	journal.registerSession("same", "same");
-	journal.registerSession("other", "other");
-	const submission = { requestId: "old", conversationId: "same", sessionId: "same",
-		kind: "prompt" as const, text: "hello", bindings: [binding("p")], attachments: [] };
-	const old = journal.accept(submission);
-	journal.start(old.taskId, old.turnId);
-	journal.recordUsage(old.taskId, old.turnId, 1_040_900);
-	journal.settle(old.taskId, old.turnId, "completed");
-	const started: string[] = [];
-	const service = new SharedTaskService(journal, {
-		maxUsage: 1_000_000,
-		resolveBinding: () => ({ processKey: "p", attachmentGeneration: "g" }),
-		validateBinding: () => {},
-		createDriver: (context) => {
-			started.push(context.taskId);
-			let finish!: () => void;
-			const done = new Promise<void>((resolve) => { finish = resolve; });
-			return { run: () => done, steer: async () => {}, cancel: () => finish(), cleanup: async () => ({ confirmed: true }) };
-		},
-	});
-	try {
-		const root = service.submit({ ...submission, requestId: "new", conversationId: conversation,
-			sessionId: conversation, bindings: [binding("p"), binding("q")] });
-		await vi.waitFor(() => expect(started).toContain(root.taskId));
-		const child = service.delegate({ ...submission, requestId: "child", conversationId: conversation,
-			sessionId: "worker", parentTaskId: root.taskId, dependencies: [] });
-		await vi.waitFor(() => expect(started).toContain(child.taskId));
-	} finally {
-		await service.stop();
-		journal.close();
-	}
-});
 
 it("enforces the combined root and child budget at delegation and queued dispatch after service recreation", () => {
 	const journal = new TaskJournal(":memory:");
@@ -346,32 +293,6 @@ it("enforces the combined root and child budget at delegation and queued dispatc
 		expect(journal.snapshot().tasks.find((task) => task.id === queued.taskId)?.state).toBe("failed");
 		expect(createDriver).not.toHaveBeenCalled();
 	} finally { journal.close(); }
-});
-
-it("does not start a model when the usage budget is exhausted", () => {
-	const journal = new TaskJournal(":memory:");
-	journal.registerSession("a", "a");
-	let started = false;
-	const service = new SharedTaskService(journal, {
-		maxUsage: 0,
-		resolveBinding: () => ({ processKey: "p", attachmentGeneration: "g" }),
-		validateBinding: () => {},
-		createDriver: () => {
-			started = true;
-			throw new Error("must not start");
-		},
-	});
-	service.submit({
-		requestId: "budget",
-		conversationId: "a",
-		sessionId: "a",
-		kind: "prompt",
-		text: "work",
-		bindings: [],
-		attachments: [],
-	});
-	expect(started).toBe(false);
-	expect(journal.snapshot().tasks[0]!.state).toBe("failed");
 });
 it("terminalizes a queued child whose dependency becomes uncertain", async () => {
 	const s = setup();

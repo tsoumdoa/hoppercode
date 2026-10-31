@@ -14,7 +14,7 @@ Rules live in `scripts/rhino-dependency-pruning.mjs`. Packaging checks all liste
 | --- | --- | --- | --- |
 | OpenAI | 6.40.0 | `src/`, 2,176,407 bytes | Node exports resolve compiled `.mjs` and `.js` files. Neither runtime tree imports source. Credential providers read caller-supplied token paths through `fs/promises`. Both module formats and all auth helpers remain. |
 | Anthropic | 0.124.0 | `src/` | The 0.124.0 export map matches 0.123.0. Node exports resolve compiled modules. Runtime credential and memory helpers read user files, not package source. `internal/node` and the compiled credential chain remain. |
-| Zod | 4.4.3 | `src/`, 1,039,186 bytes | Standard Node import/require conditions resolve compiled modules. Only the development `@zod/source` condition selects TypeScript source; Hopper does not enable it. Keep v3, v4, mini, locales, and both compiled formats. |
+| Zod | 4.6.6 | `src/` | Standard Node import/require conditions resolve compiled modules. Only the development `@zod/source` condition selects TypeScript source; Hopper does not enable it. Keep v3, v4, mini, locales, and both compiled formats. Rechecked for the 0.3.1 security update; measurements below remain those of the original pruning pass. |
 | cmake-ts | 1.0.2 | Source, four root build configs, build cache, `build/main.{js,mjs}` and `build/lib.{js,mjs}`, 1,369,362 bytes | ZeroMQ 6.5.0 `lib/load-addon.js` requires `cmake-ts/build/loader`. Both standalone loader formats import only Node builtins and read ZeroMQ's `build/manifest.json` and native addon paths. The build CLI is referenced by ZeroMQ's install script, which runs before pruning. Neither loader imports the build CLI/library. Both loaders and package metadata remain unchanged. |
 
 Reviewed compiled imports and file reads in these packages and searched the staged dependency tree for `cmake-ts` consumers. No SDK runtime code was patched. The existing Pi bundle deduplication remains a separate rule.
@@ -52,3 +52,18 @@ File counts are now 6,461 on macOS and 6,462 on Windows. Staged ceilings are 83 
 - Windows binaries cannot execute on this macOS arm64 machine. Windows runtime smoke, Yak installation, and in-Rhino acceptance remain unverified. This pass does not claim a manual browser or Rhino test, or validation on the minimum supported Node release.
 
 Reproduce the runtime check with `node scripts/smoke-staged-host.mjs <stage>`. Run it on a Windows x64 machine against the Windows package before native release acceptance.
+
+## 0.3.1 dependency review
+
+The refreshed macOS production tree contains 60,905,718 bytes of dependencies.
+The published 0.3.0 archive contains 59,538,380 bytes, already close to the former
+57 MiB allowance. The largest additions are the security updates to Zod
+(661,235 bytes) and Undici (256,555 bytes), followed by SDK internals and the new
+Minimatch implementation. These are runtime modules, including both public
+ESM and CommonJS exports; deleting them would compromise supported SDK use.
+
+Dependency allowances are now 59 MiB for macOS and 62 MiB for Windows. The total
+staged ceilings remain 83 and 86 MiB. Zod 4.6.6's exports and compiled file reads
+were rechecked before retaining the existing source-only pruning rule. The
+full dependency audit reports no known vulnerabilities. Package validation and
+the staged Windows runtime smoke remain release checks.

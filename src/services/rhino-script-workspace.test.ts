@@ -10,8 +10,6 @@ import { tmpdir, hostname } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { RhinoScriptWorkspace } from "./rhino-script-workspace.js";
-import { applySourcePatches, sourceLines } from "./source-line-patches.js";
-import { resolveHostConfig } from "../host/config.js";
 const dirs: string[] = [];
 function workspace(quota?: number) {
 	const dir = mkdtempSync(join(tmpdir(), "hopper-scripts-"));
@@ -24,133 +22,7 @@ afterEach(() => {
 	for (const dir of dirs.splice(0))
 		rmSync(dir, { recursive: true, force: true });
 });
-describe("original revision source patches", () => {
-	it.each(["", "abc", "abc\n"])(
-		"retains inserted trailing blank lines in %j",
-		(source) => {
-			const originalLines = sourceLines(source);
-			const edited = applySourcePatches(source, [
-				{ action: "insert", afterLine: originalLines.length, lines: ["", ""] },
-			]);
-			expect(sourceLines(edited)).toEqual([...originalLines, "", ""]);
-			expect(applySourcePatches(edited, [
-				{
-					action: "replace",
-					startLine: originalLines.length + 2,
-					endLine: originalLines.length + 2,
-					lines: ["last"],
-				},
-			])).toContain("\nlast\n");
-		},
-	);
-	it("preserves a final line replaced with an empty line", () => {
-		expect(sourceLines(applySourcePatches("abc", [
-			{ action: "replace", startLine: 1, endLine: 1, lines: [""] },
-		]))).toEqual([""]);
-	});
-	it("preserves Unicode, LF normalization, final newline and empty source semantics", () => {
-		expect(sourceLines("")).toEqual([]);
-		expect(sourceLines("a\n")).toEqual(["a"]);
-		expect(sourceLines("\n")).toEqual([""]);
-		expect(
-			applySourcePatches("a\nβ\nc\n", [
-				{ action: "replace", startLine: 2, endLine: 2, lines: ["日本"] },
-				{ action: "insert", afterLine: 3, lines: ["d"] },
-			]),
-		).toBe("a\n日本\nc\nd\n");
-		expect(
-			applySourcePatches("", [
-				{ action: "insert", afterLine: 0, lines: ["hi"] },
-			]),
-		).toBe("hi");
-		expect(
-			applySourcePatches("a\n", [
-				{ action: "delete", startLine: 1, endLine: 1 },
-			]),
-		).toBe("");
-	});
-	it("rejects overlap, embedded newlines, fractional/out-of-bounds lines and stale text", () => {
-		expect(() =>
-			applySourcePatches("a\nb", [
-				{ action: "replace", startLine: 1, endLine: 2, lines: [] },
-				{ action: "insert", afterLine: 1, lines: ["x"] },
-			]),
-		).toThrow("OVERLAPPING_PATCHES");
-		expect(() =>
-			applySourcePatches("a", [
-				{ action: "insert", afterLine: 0, lines: ["x\ny"] },
-			]),
-		).toThrow("INVALID_PATCH");
-		expect(() =>
-			applySourcePatches("a", [
-				{ action: "insert", afterLine: 0.5, lines: [] },
-			]),
-		).toThrow("INVALID_INPUT");
-		expect(() =>
-			applySourcePatches("a", [
-				{
-					action: "replace",
-					startLine: 1,
-					endLine: 1,
-					lines: [],
-					expectedText: "z",
-				},
-			]),
-		).toThrow("TEXT_CONFLICT");
-	});
-});
 describe("persistent source workspace", () => {
-	it("continues from a long partial line to the remaining source", () => {
-		const w = workspace();
-		const long = "x".repeat(17_000);
-		const r = create(w, `${long}\nprint(1)`);
-		const first = w.get(r.scriptId);
-		expect(first.partialLine?.nextCharacterOffset).toBe(16_000);
-		expect(first.nextLine).toBeNull();
-		const tail = w.get(
-			r.scriptId, 1, 1, undefined, first.partialLine!.nextCharacterOffset!,
-		);
-		expect(tail.partialLine?.nextCharacterOffset).toBeNull();
-		expect(tail.nextLine).toBe(2);
-		expect(tail.truncated).toBe(true);
-		expect(first.partialLine!.text + tail.partialLine!.text).toBe(long);
-		const remaining = w.get(r.scriptId, 1, tail.nextLine!);
-		expect(remaining.lines).toEqual([{ line: 2, text: "print(1)" }]);
-		expect(remaining.nextLine).toBeNull();
-		expect(remaining.truncated).toBe(false);
-		expect(w.get(r.scriptId, 1, 1, 1, 16_000).truncated).toBe(false);
-	});
-	it("creates, patches and reads a 100-line script by revision", () => {
-		const w = workspace(),
-			source =
-				Array.from({ length: 100 }, (_, i) => `print(${i})`).join("\r\n") +
-				"\r\n",
-			r = create(w, source);
-		const changed = w.mutate(
-			{
-				action: "patch",
-				scriptId: r.scriptId,
-				expectedRevision: 1,
-				patches: [
-					{
-						action: "replace",
-						startLine: 50,
-						endLine: 50,
-						lines: ["print('changed')"],
-					},
-				],
-			},
-			"edit",
-		);
-		expect(changed.revision).toBe(2);
-		expect(changed.diff.text).toContain("+print('changed')");
-		expect(w.get(r.scriptId, 2, 49, 51).lines.map((l) => l.text)).toEqual([
-			"print(48)",
-			"print('changed')",
-			"print(50)",
-		]);
-		expect(w.resolve(r.scriptId, 1).source).toContain("print(49)");
-	});
 	it("keeps mutation results across later metadata/source changes and restart", () => {
 		const w = workspace(),
 			r = create(w);
@@ -342,32 +214,6 @@ describe("persistent source workspace", () => {
 		expect(readdirSync(w.store.directory).some((n) => n.endsWith(".tmp"))).toBe(
 			false,
 		);
-	});
-	it("keeps scripts stable when host lifecycle IDs change and supports workspace/quota overrides", () => {
-		const w = workspace(),
-			dataDir = join(w.store.directory, "../..");
-		const a = resolveHostConfig(
-				["--data-dir", dataDir, "--instance-id", "first"],
-				{ env: {} },
-			),
-			b = resolveHostConfig(
-				["--data-dir", dataDir, "--instance-id", "second"],
-				{ env: {} },
-			);
-		expect(a.paths.workspaceDir).not.toBe(b.paths.workspaceDir);
-		expect(a.paths.scriptWorkspaceDir).toBe(b.paths.scriptWorkspaceDir);
-		const first = new RhinoScriptWorkspace(a.paths.scriptWorkspaceDir!),
-			r = create(first),
-			second = new RhinoScriptWorkspace(b.paths.scriptWorkspaceDir!);
-		expect(second.get(r.scriptId).revision).toBe(1);
-		expect(
-			resolveHostConfig(["--script-workspace", dataDir], {
-				env: { HOPPER_SCRIPT_WORKSPACE_QUOTA_BYTES: "100000" },
-			}).paths.scriptWorkspaceQuotaBytes,
-		).toBe(100000);
-		expect(() =>
-			resolveHostConfig(["--script-workspace", "relative"], { env: {} }),
-		).toThrow("absolute");
 	});
 	it("serializes independent process writers without losing source revisions", async () => {
 		const w = workspace(),

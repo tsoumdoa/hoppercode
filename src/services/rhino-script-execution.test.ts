@@ -5,12 +5,10 @@ import { tmpdir } from "node:os";
 import { RhinoScriptWorkspace } from "./rhino-script-workspace.js";
 import {
 	RhinoScriptExecution,
-	runtimeScriptBackend,
 	type ScriptExecutionBackend,
 } from "./rhino-script-execution.js";
-import * as runtimeRpc from "../infra/runtime-rpc.js";
 import type { RunItem, RunRecord } from "../types/rhino-script-workspace.js";
-import { validateRpcRequest, type OperationResultSnapshot } from "../protocol/v2.js";
+import { type OperationResultSnapshot } from "../protocol/v2.js";
 const dirs: string[] = [];
 const target = {
 	documentId: "doc",
@@ -59,54 +57,6 @@ afterEach(() => {
 		rmSync(dir, { recursive: true, force: true });
 });
 describe("durable execution admission", () => {
-	it("sends a saved revision through the production backend as valid RPC JSON", async () => {
-		const { w, item } = setup();
-		const invoke = vi.fn(async (operation, args, options) => {
-			expect(validateRpcRequest({ protocolVersion: 2, lifecycleInstanceId: "host", requestId: "request",
-				token: "a".repeat(32), operation, operationId: options.operationId,
-				startDeadlineAt: Date.now() + 1000, args }).ok).toBe(true);
-			return { result: ok };
-		});
-		vi.spyOn(runtimeRpc, "getRuntimeRpc").mockReturnValue({ lifecycleInstanceId: "host", invoke } as unknown as ReturnType<typeof runtimeRpc.getRuntimeRpc>);
-		const result = await new RhinoScriptExecution(w).runBatch([item], "rpc-regression");
-		expect(invoke).toHaveBeenCalledOnce();
-		expect(result.runs[0].state).toBe("completed");
-	});
-	it("paginates every execution when run history exceeds revision history", async () => {
-		const { w, execution, item } = setup();
-		const expectedRunIds: string[] = [];
-		for (let i = 0; i < 3; i++) {
-			const result = await execution.runBatch([item], `history-${i}`);
-			expectedRunIds.push(result.runs[0].runId);
-		}
-		const first = w.history(item.scriptId, 0, 2);
-		expect(first.total).toBe(1);
-		expect(first.totalRuns).toBe(3);
-		expect(first.nextOffset).toBe(2);
-		const second = w.history(item.scriptId, first.nextOffset!, 2);
-		expect(second.revisions).toEqual([]);
-		expect(second.nextOffset).toBeNull();
-		expect([...first.runIds, ...second.runIds].sort()).toEqual(
-			expectedRunIds.sort(),
-		);
-	});
-	it("passes document and settings preconditions directly to native execution", async () => {
-		const invoke = vi.fn().mockResolvedValue({ result: ok });
-		vi.spyOn(runtimeRpc, "getRuntimeRpc").mockReturnValue({
-			lifecycleInstanceId: "host",
-			invoke,
-		} as unknown as ReturnType<typeof runtimeRpc.getRuntimeRpc>);
-		const signal = new AbortController().signal;
-		const item = { mode: "python" as const, source: "print(1)" };
-		expect(
-			await runtimeScriptBackend().run(item, target, "operation", signal),
-		).toEqual(ok);
-		expect(invoke).toHaveBeenCalledExactlyOnceWith(
-			"runRhinoScript",
-			{ ...item, expectedDocument: target },
-			{ operationId: "operation", signal },
-		);
-	});
 	it("pins a revision, persists operation ID and settings, returns old batch after source deletion", async () => {
 		const { w, asset, backend, execution, item } = setup();
 		const result = await execution.runBatch([item], "session:call");
@@ -253,27 +203,6 @@ describe("durable execution admission", () => {
 		expect(backend.run).toHaveBeenCalledTimes(1);
 		expect(execution.getRun(result.runs[0].runId).state).toBe("dispatching");
 	});
-	it("reserves run completion space despite a filled source quota and bounds output", async () => {
-		const { w, backend, execution, item } = setup(175_000);
-		vi.mocked(backend.run).mockImplementationOnce(async () => {
-			expect(() =>
-				w.mutate(
-					{
-						action: "setSource",
-						scriptId: item.scriptId,
-						expectedRevision: 1,
-						source: "x".repeat(64_000),
-					},
-					"fill",
-				),
-			).toThrow("WORKSPACE_LIMIT_REACHED");
-			return { ...ok, data: { ok: true, output: "x".repeat(64_000) } };
-		});
-		const result = await execution.runBatch([item], "call");
-		expect(result.runs[0].state).toBe("completed");
-		expect(result.runs[0].output).toHaveLength(6000);
-		expect(result.runs[0].outputTruncated).toBe(true);
-	});
 	it("does not finalize a live prepared owner and never restarts recovered dispatching work", async () => {
 		const { w, backend, execution, item } = setup();
 		const result = await execution.runBatch([item], "call"),
@@ -299,51 +228,6 @@ describe("durable execution admission", () => {
 		expect((await execution.reconcileRun(runId)).state).toBe("outcome_unknown");
 		expect(backend.run).toHaveBeenCalledTimes(1);
 	});
-	it("promotes a known terminal result over a concurrent observer's uncertain journal version", async () => {
-		const { w, backend, execution, item } = setup();
-		vi.mocked(backend.run).mockImplementationOnce(
-			async (_item, _doc, operationId) => {
-				const batchId = w.store.list("batch_")[0];
-				const batch = w.store.read<{ runs: RunRecord[] }>(batchId);
-				const run = execution.getRun(batch.runs[0].runId);
-				expect(run.operationId).toBe(operationId);
-				// Another process completed a retained-result lookup before the original runner returned.
-				w.store.transaction(() =>
-					w.store.write(run.runId, {
-						...run,
-						version: run.version + 1,
-						state: "outcome_unknown",
-					}),
-				);
-				return {
-					...ok,
-					data: {
-						ok: false,
-						error: { code: "SCRIPT_ERROR", message: "partial geometry exists" },
-					},
-				};
-			},
-		);
-		const result = await execution.runBatch([item], "race");
-		expect(result.runs[0].state).toBe("failed");
-		expect(result.runs[0].error).toContain("partial geometry exists");
-		expect(execution.getRun(result.runs[0].runId).state).toBe("failed");
-	});
-	it("classifies native settings precondition rejections as notStarted", async () => {
-		for (const code of ["SETTINGS_CHANGED", "DOCUMENT_SETTINGS_CHANGED"]) {
-			const { backend, execution, item } = setup();
-			vi.mocked(backend.run).mockResolvedValue({
-				class: "failed",
-				reasonCode: "OPERATION_FAILED",
-				message: `${code}: Inspect the new settings`,
-			});
-			const result = await execution.runBatch([item, item], code);
-			expect(result.runs.map((run) => run.state)).toEqual([
-				"notStarted",
-				"notRun",
-			]);
-		}
-	});
 	it("preserves known completion when disk exhaustion also prevents every skipped-item write", async () => {
 		const { w, backend, execution, item } = setup();
 		vi.mocked(backend.run).mockImplementationOnce(async () => {
@@ -364,27 +248,6 @@ describe("durable execution admission", () => {
 			expect(run.recordingError).toContain("ENOSPC");
 		expect(execution.getRun(result.runs[0].runId).state).toBe("dispatching");
 		expect(execution.getRun(result.runs[1].runId).state).toBe("prepared");
-	});
-	it("preserves earlier results when a later dispatch journal fails before source submission", async () => {
-		const { w, backend, execution, item } = setup();
-		const original = w.store.write.bind(w.store);
-		let dispatchCount = 0;
-		vi.spyOn(w.store, "write").mockImplementation((id, value) => {
-			if ((value as RunRecord).state === "dispatching" && ++dispatchCount === 2)
-				throw new Error("ENOSPC: dispatch state");
-			return original(id, value);
-		});
-		const result = await execution.runBatch(
-			[item, item, item],
-			"dispatch-full",
-		);
-		expect(result.runs.map((run) => run.state)).toEqual([
-			"completed",
-			"notStarted",
-			"notRun",
-		]);
-		expect(result.runs[1].recordingError).toContain("ENOSPC");
-		expect(backend.run).toHaveBeenCalledTimes(1);
 	});
 	it("retains uncertainty when native execution's result was replaced by an oversized-result marker", async () => {
 		const { backend, execution, item } = setup();

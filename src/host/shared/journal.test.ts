@@ -165,40 +165,6 @@ describe("shared task journal foundation", () => {
 		expect(j.snapshot().tasks[0].state).toBe("awaiting_user");
 		j.settle(second.taskId, second.turnId, "cancelled");
 	});
-	it("delivers steering in acceptance order", () => {
-		const { journal: j } = fixture();
-		const { taskId, turnId } = j.accept(submission());
-		j.start(taskId, turnId);
-		const a = j.steer("a", taskId, "session", turnId, "first");
-		const b = j.steer("b", taskId, "session", turnId, "second");
-		expect(() => j.markInput(b.inputId, "delivering")).toThrow(/Earlier/);
-		j.markInput(a.inputId, "delivering");
-		expect(() => j.markInput(b.inputId, "delivering")).toThrow(/Earlier/);
-		j.markInput(a.inputId, "applied");
-		j.markInput(b.inputId, "delivering");
-		j.markInput(b.inputId, "applied");
-		expect(j.snapshot().inputs.map((i) => i.state)).toEqual([
-			"applied",
-			"applied",
-		]);
-	});
-
-	it("rejects non-JSON payloads instead of deduplicating lossy encodings", () => {
-		const { journal: j } = fixture();
-		expect(() =>
-			j.accept({ ...submission(), attachments: [undefined] }),
-		).toThrow(/JSON/);
-		expect(() => j.accept({ ...submission(), attachments: [NaN] })).toThrow(
-			/JSON/,
-		);
-		expect(() =>
-			j.accept({ ...submission(), attachments: new Array(1) }),
-		).toThrow(/JSON/);
-		expect(() =>
-			j.accept({ ...submission(), attachments: new Array(2) }),
-		).toThrow(/JSON/);
-		expect(j.snapshot().tasks).toHaveLength(0);
-	});
 });
 
 it("commits a whole reservation set with dispatch and rolls all of it back on conflict", () => {

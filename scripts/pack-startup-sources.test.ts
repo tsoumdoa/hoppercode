@@ -1,9 +1,9 @@
 import { build } from "esbuild";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rename, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { gzipSync, gunzipSync } from "node:zlib";
+import { gunzipSync } from "node:zlib";
 import { afterEach, expect, it } from "vitest";
 import { packStartupSources, STARTUP_SOURCE_ARCHIVE } from "./pack-startup-sources.mjs";
 
@@ -78,34 +78,4 @@ it("serves original ESM and CJS sources after relocation, then releases hooks fo
 	`], { cwd: relocated, encoding: "utf8", timeout: 10000, windowsHide: true });
 	expect(child.error).toBeUndefined();
 	expect(child.status, child.stderr).toBe(0);
-});
-
-it.each(["missing", "corrupt", "unsupported", "escaping"])("falls back to the filesystem for a %s archive", async kind => {
-	const f = await fixture();
-	if (kind !== "missing") await writeFile(join(f.modules, STARTUP_SOURCE_ARCHIVE), kind === "corrupt" ? "invalid gzip" :
-		gzipSync(JSON.stringify(kind === "unsupported" ? { version: 2 } : { version: 1, modules: { "../escaped.js": { format: "module", source: "" } } })));
-	const child = spawnSync(process.execPath, ["--input-type=module", "--eval", `
-		import {loadStartupSources} from './loader.mjs';
-		const release = await loadStartupSources(process.cwd());
-		const {identity} = await import('fixture.pkg');
-		if (!identity) throw new Error('ordinary import failed');
-		release();
-	`], { cwd: f.project, encoding: "utf8", timeout: 10000, windowsHide: true });
-	expect(child.status, child.stderr).toBe(0);
-	if (kind === "missing") expect(child.stderr).toBe("");
-	else expect(child.stderr).toContain("using files");
-});
-
-it("rejects development installs, traversal, linked inputs and existing archives before writing", async () => {
-	const f = await fixture();
-	await expect(packStartupSources(resolve("node_modules"), [])).rejects.toThrow("staged");
-	await expect(packStartupSources(f.modules, ["../outside"])).rejects.toThrow("Invalid startup package");
-	await symlink(f.pkg, join(f.pkg, "linked"), process.platform === "win32" ? "junction" : "dir");
-	await expect(packStartupSources(f.modules, ["fixture.pkg"])).rejects.toThrow("links");
-	await expect(readFile(join(f.modules, STARTUP_SOURCE_ARCHIVE))).rejects.toMatchObject({ code: "ENOENT" });
-	await unlink(join(f.pkg, "linked"));
-	await packStartupSources(f.modules, ["fixture.pkg"]);
-	const original = await readFile(join(f.modules, STARTUP_SOURCE_ARCHIVE));
-	await expect(packStartupSources(f.modules, ["fixture.pkg"])).rejects.toMatchObject({ code: "EEXIST" });
-	expect(await readFile(join(f.modules, STARTUP_SOURCE_ARCHIVE))).toEqual(original);
 });

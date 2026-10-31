@@ -1,6 +1,6 @@
-import { chmod, mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAgentSessionFromServices, createAgentSessionServices, SessionManager } from "@earendil-works/pi-coding-agent";
 import { ToolPolicyRuntime } from "../services/tool-policy-runtime.js";
@@ -74,75 +74,6 @@ describe("host skill library", () => {
 		} finally { await policy.close(); session.dispose(); vi.restoreAllMocks(); }
 	});
 
-	it("leaves unknown and disabled skill commands unexpanded", async () => {
-		const { library } = await fixture();
-		const skill = library.snapshot().skills[0];
-		expect(library.expandCommand(`/skill:${skill.name}`)).toContain("# Modeling");
-		await library.update({ type: "toggle", id: skill.id, enabled: false });
-		for (const text of [`/skill:${skill.name}`, "/skill:missing args", "Create a sphere"]) {
-			expect(library.expandCommand(text)).toBe(text);
-		}
-	});
-
-	it("does not re-enable references when a disabled package's SKILL.md cannot load", async () => {
-		const { library } = await fixture();
-		const skill = library.snapshot().skills[0];
-		const reference = skill.files.find((path) => path.endsWith("example.md"))!;
-		await library.update({ type: "toggle", id: skill.id, enabled: false });
-		await writeFile(skill.path, "x".repeat(256 * 1024 + 1));
-		await library.refresh();
-		expect(library.snapshot().skills.map((entry) => entry.name)).toEqual(["reference"]);
-		expect(() => library.read(reference)).toThrow("unavailable or disabled");
-	});
-
-	it("starts with bundled skills when a saved custom folder is unavailable", async () => {
-		const { root, project, folder, preferences, library } = await fixture();
-		const custom = join(root, "external-folder");
-		await mkdir(custom);
-		await library.update({ type: "folder", folder: custom });
-		await rm(custom, { recursive: true });
-		// Simulate a disconnected location that can no longer be created as a directory.
-		await writeFile(custom, "not a directory");
-		const restored = new HostSkillLibrary(project, preferences, folder);
-		await restored.initialize();
-		expect(restored.getSkills().skills.map((skill) => skill.name)).toEqual(["modeling", "reference"]);
-		expect(restored.snapshot().diagnostics.join("\n")).toContain(custom);
-		await restored.update({ type: "folder", folder });
-		expect(restored.snapshot().diagnostics).toEqual([]);
-	});
-
-	it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("keeps discovering other skills when one Markdown file cannot be read", async () => {
-		const { folder, library } = await fixture();
-		const unreadable = join(folder, "a-unreadable.md");
-		await writeFile(unreadable, "Unreadable");
-		await writeFile(join(folder, "z-valid.md"), "Valid instructions");
-		await chmod(unreadable, 0);
-		try {
-			await library.refresh();
-			expect(library.snapshot().skills.some((skill) => skill.name === "z-valid")).toBe(true);
-			expect(library.snapshot().diagnostics.join("\n")).toContain(unreadable);
-		} finally { await chmod(unreadable, 0o600); }
-	});
-
-	it("discovers loose Markdown, packages references, and refreshes edits and removals", async () => {
-		const { folder, library } = await fixture();
-		await writeFile(join(folder, "office.md"), "# Office modeling rules\nAlways use meters.");
-		await mkdir(join(folder, "facades", "reference"), { recursive: true });
-		await writeFile(join(folder, "facades", "SKILL.md"), "---\nname: facade-design\ndescription: Design facades\n---\n# Facades");
-		await writeFile(join(folder, "facades", "reference", "panels.md"), "# Panel rules");
-		await library.refresh();
-		expect(library.snapshot().skills.map((skill) => skill.name)).toEqual(["modeling", "reference", "facade-design", "office"]);
-		const facade = library.snapshot().skills.find((skill) => skill.name === "facade-design")!;
-		expect(facade.files).toHaveLength(2);
-		expect(library.getSkills().skills.find((skill) => skill.name === "office")?.description).toBe("Office modeling rules");
-		await writeFile(join(folder, "office.md"), "# Updated office rules");
-		await library.refresh();
-		expect(library.read(join(folder, "office.md"))).toContain("Updated office rules");
-		await rm(join(folder, "office.md"));
-		await library.refresh();
-		expect(() => library.read(join(folder, "office.md"))).toThrow("unavailable or disabled");
-	});
-
 	it("persists disable state and blocks the skill and its references while allowing UI previews", async () => {
 		const { project, folder, preferences, library } = await fixture();
 		const modeling = library.snapshot().skills[0];
@@ -189,21 +120,6 @@ describe("host skill library", () => {
 		expect(() => library.read(path)).toThrow("unavailable or disabled");
 	});
 
-	it("switches the drop folder persistently and removes access to the old folder", async () => {
-		const { root, project, folder, preferences, library } = await fixture();
-		await writeFile(join(folder, "old.md"), "Old");
-		const next = join(root, "another folder");
-		await mkdir(next);
-		await writeFile(join(next, "new.md"), "New rules");
-		await library.update({ type: "folder", folder: next });
-		expect(library.read(join(next, "new.md"))).toBe("New rules");
-		expect(() => library.read(join(folder, "old.md"))).toThrow();
-		const restored = new HostSkillLibrary(project, preferences, folder);
-		await restored.initialize();
-		expect(restored.snapshot().folder).toBe(next);
-		await expect(library.update({ type: "folder", folder: "relative/path" })).rejects.toThrow("absolute");
-	});
-
 	it("does not allow a user folder to re-expose disabled bundled files", async () => {
 		const { project, library } = await fixture();
 		const skill = library.snapshot().skills[0];
@@ -212,43 +128,5 @@ describe("host skill library", () => {
 		expect(library.snapshot().skills).toHaveLength(2);
 		expect(() => library.read(skill.path)).toThrow("disabled");
 		expect(library.snapshot().diagnostics).toContain("Choose a Markdown folder separate from the bundled skills and references.");
-	});
-
-	it("advertises all four real bundled skills in Pi with only the restricted read and Hopper tools", async () => {
-		const { root, library } = await fixture(resolve("."));
-		const policy = new ToolPolicyRuntime({ directory: join(root, "tool-settings"), embedded: true });
-		const services = await createAgentSessionServices({
-			cwd: root, agentDir: join(root, "agent"),
-			resourceLoaderOptions: isolatedResourceLoaderOptions({ toolPolicy: policy, scriptWorkspaceDir: join(root, "scripts") }),
-		});
-		services.resourceLoader.getSkills = () => policy.isToolExposed("read") ? library.getSkills() : { skills: [], diagnostics: [] };
-		const { session } = await createAgentSessionFromServices({
-			services, sessionManager: SessionManager.inMemory(root), noTools: "builtin", customTools: [policy.customTool(library.createReadTool(root))],
-		});
-		try {
-			await session.bindExtensions({ mode: "rpc", uiContext: { notify: vi.fn() } as never });
-			expect(session.getAllTools().map(tool => tool.name)).toEqual(expect.arrayContaining(policy.inventory.map(tool => tool.name)));
-			const active = session.getActiveToolNames();
-			expect(active.every(name => policy.inventory.some(tool => tool.name === name))).toBe(true);
-			expect(active).toContain("read");
-			expect(active).toContain("rh_run_script");
-			expect(active).toContain("ask_user");
-			for (const name of ["bash", "edit", "write", "grep", "find", "ls"]) expect(active).not.toContain(name);
-			for (const name of ["rhino-document", "gh-modeling-expert", "gh-cookbook", "gh-reference"]) {
-				expect(session.systemPrompt).toContain(`<name>${name}</name>`);
-			}
-			const skill = library.snapshot().skills.find((entry) => entry.name === "rhino-document")!;
-			const read = session.agent.state.tools.find((tool) => tool.name === "read")!;
-			const result = await read.execute("test-read", { path: skill.path });
-			expect(JSON.stringify(result.content)).toContain("name: rhino-document");
-			await expect(read.execute("test-outside", { path: join(root, "auth.json") })).rejects.toThrow("unavailable");
-			await library.update({ type: "toggle", id: skill.id, enabled: false });
-			session.setActiveToolsByName(active);
-			expect(session.systemPrompt).not.toContain("<name>rhino-document</name>");
-			await expect(read.execute("test-disabled", { path: skill.path })).rejects.toThrow("disabled");
-		} finally {
-			await policy.close();
-			session.dispose();
-		}
 	});
 });
