@@ -8,9 +8,9 @@
     <NoWarn>NU1701;NETSDK1086</NoWarn>
     <AssemblyName>Hopper.Grasshopper</AssemblyName>
     <RootNamespace>rhino_zmq_poc</RootNamespace>
-    <Version>0.3.1</Version>
+    <Version>0.3.2</Version>
     <Title>Hopper Grasshopper</Title>
-    <Company>hoppercode</Company>
+    <Company>AEC Tooling</Company>
     <Description>Lazy Grasshopper operations for the Rhino-owned Hopper host</Description>
   </PropertyGroup>
 
