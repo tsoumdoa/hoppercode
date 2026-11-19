@@ -8,9 +8,9 @@
     <NoWarn>NU1701;NETSDK1086</NoWarn>
     <AssemblyName>Hopper.Rhino</AssemblyName>
     <RootNamespace>rhino_zmq_poc</RootNamespace>
-    <Version>0.3.1</Version>
+    <Version>0.3.2</Version>
     <Title>Hopper</Title>
-    <Company>hoppercode</Company>
+    <Company>AEC Tooling</Company>
     <Description>Private Hopper host launcher and Rhino lifecycle owner</Description>
   </PropertyGroup>
 

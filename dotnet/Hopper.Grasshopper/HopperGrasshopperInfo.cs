@@ -8,7 +8,7 @@ namespace rhino_zmq_poc
 {
   public class rhino_zmq_pocInfo : GH_AssemblyInfo
   {
-    public override string Name => "Hopper.Grasshopper";
+    public override string Name => "HopperCode";
 
     //Return a 24x24 pixel bitmap to represent this GHA library.
     public override Bitmap Icon => PluginIcon.Bitmap;
@@ -19,7 +19,7 @@ namespace rhino_zmq_poc
     public override Guid Id => new Guid(PublicIdentity.GrasshopperAssemblyId);
 
     //Return a string identifying you or your company.
-    public override string AuthorName => "hoppercode contributors";
+    public override string AuthorName => "aectooling by tomoS";
 
     //Return a string representing your preferred contact details.
     public override string AuthorContact => "";

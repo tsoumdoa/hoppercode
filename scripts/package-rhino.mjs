@@ -304,7 +304,7 @@ writeFileSync(join(output, "manifest.yml"), [
 	"name: hoppercode",
 	`version: ${packageJson.version}`,
 	"authors:",
-	"  - aectooling",
+	"  - aectooling by tomoS",
 	"description: >",
 	"  Hopper is an AI assistant for Rhino models and Grasshopper definitions, with a browser chat UI.",
 	"  Requires Rhino 8.20 or newer running .NET 8 and separately installed stable Node.js 22.19.0 or newer.",

@@ -62,7 +62,7 @@ If interrupted, see docs/releasing.md before retrying.`);
 	// gh creates the tag at this full SHA, never implicitly at the default branch.
 	run("git", ["push", "origin", `HEAD:refs/heads/${branch}`]);
 	run("gh", ["release", "create", tag, ...archives.map((archive) => archive.file), "--repo", repo, "--target", commit,
-		"--title", `Hopper ${version}`, "--generate-notes", "--draft"]);
+		"--title", `HopperCode ${version}`, "--generate-notes", "--draft"]);
 	if (!values["github-only"]) run(process.execPath, [join(root, "scripts/yak.mjs"), "push", "public", ...(values.output ? ["--output", values.output] : [])]);
 	run("gh", ["release", "edit", tag, "--repo", repo, "--draft=false", "--latest"]);
 	console.log(`${values["dry-run"] ? "Would publish" : "Published"} https://github.com/${repo}/releases/tag/${tag}`);
